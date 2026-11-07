@@ -1,0 +1,9 @@
+[package]
+name = "reader-app"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+reader-core.workspace = true
+rune.workspace = true

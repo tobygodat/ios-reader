@@ -1,0 +1,12 @@
+[package]
+name = "reader-ios"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+reader-app.workspace = true
+rune.workspace = true

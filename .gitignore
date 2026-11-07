@@ -1,0 +1,6 @@
+/target
+.DS_Store
+ios/build/
+ios/*.xcodeproj/xcuserdata/
+ios/*.xcodeproj/project.xcworkspace/xcuserdata/
+.audit/

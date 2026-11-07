@@ -1,0 +1,13 @@
+[package]
+name = "reader-mac"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "reader"
+path = "src/main.rs"
+
+[dependencies]
+reader-app.workspace = true
+rune.workspace = true
