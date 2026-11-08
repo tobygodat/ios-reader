@@ -26,6 +26,13 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cargo run -p reader-core --example dump -- <file> [chapter]` prints what a book parses into.
 - `scripts/ios-build.sh` builds the iOS library, generates `ios/Reader.xcodeproj` with xcodegen, builds the simulator app and prints its path.
 
+## TestFlight
+
+- `scripts/testflight.sh` archives in Release and uploads with the Apple ID signed in to Xcode. `scripts/testflight.sh export` stops at the signed `.ipa`. The build number is the commit count, so commit first.
+- `ios/Reader/PrivacyInfo.xcprivacy` declares the required-reason APIs the Rust library imports (`stat` family, `mach_absolute_time`). After adding a dependency, check with `nm -u` on the app binary.
+- `ITSAppUsesNonExemptEncryption` is `false`. `lopdf` carries AES and ChaCha20 to open encrypted PDFs, which is why this is a declaration to review before any public release.
+- `scripts/make-icon.py` renders the iOS icon. The Mac icon still comes from `assets/icon.svg`.
+
 ## Build speed
 
 - The root `Cargo.toml` builds the parsing, text layout and image crates at `opt-level = 2` even in debug. If a test or the debug app spends its time in another dependency, add that crate to the list. Don't switch to `"*"`: it doubles a cold build and the tests run no faster.

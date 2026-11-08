@@ -29,6 +29,8 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: Q6NAWA42Y2
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         RUST_PROFILE: debug
         RUST_TARGET_DIR: $(PROJECT_DIR)/../target
         "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
@@ -50,6 +52,9 @@ targets:
       path: Reader/Info.plist
       properties:
         CFBundleDisplayName: Reader
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIApplicationSceneManifest:
