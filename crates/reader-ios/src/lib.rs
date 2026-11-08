@@ -22,6 +22,8 @@ use rune::embed::LayerHost;
 const REQUEST_NONE: u32 = 0;
 const REQUEST_PICK_BOOK: u32 = 1;
 const REQUEST_PICK_FOLDER: u32 = 2;
+const REQUEST_SIGN_IN: u32 = 3;
+const REQUEST_CREATE_ACCOUNT: u32 = 4;
 
 pub struct ReaderHost {
     view: LayerHost<State>,
@@ -220,6 +222,8 @@ pub extern "C" fn reader_host_take_request(host: *mut ReaderHost) -> u32 {
     with_host(host, REQUEST_NONE, |h| match reader_app::take_request(&mut h.view.runtime_mut().state) {
         Some(HostRequest::PickBook) => REQUEST_PICK_BOOK,
         Some(HostRequest::PickFolder) => REQUEST_PICK_FOLDER,
+        Some(HostRequest::AskCredentials { create: false }) => REQUEST_SIGN_IN,
+        Some(HostRequest::AskCredentials { create: true }) => REQUEST_CREATE_ACCOUNT,
         None => REQUEST_NONE,
     })
 }
@@ -238,6 +242,18 @@ pub unsafe extern "C" fn reader_host_import(host: *mut ReaderHost, path: *const 
 pub unsafe extern "C" fn reader_host_search_folder(host: *mut ReaderHost, path: *const c_char) {
     let Some(path) = path_arg(path) else { return };
     with_host(host, (), |h| h.view.runtime_mut().update(|s, _| reader_app::search_folder(s, &path)));
+}
+
+/// # Safety
+/// `email` and `password` are NUL-terminated UTF-8 strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn reader_host_submit_credentials(host: *mut ReaderHost, email: *const c_char, password: *const c_char, create: bool) {
+    if email.is_null() || password.is_null() {
+        return;
+    }
+    let email = unsafe { CStr::from_ptr(email) }.to_string_lossy().trim().to_string();
+    let password = unsafe { CStr::from_ptr(password) }.to_string_lossy().into_owned();
+    with_host(host, (), |h| h.view.runtime_mut().update(|s, _| reader_app::submit_credentials(s, email, password, create)));
 }
 
 /// Whether the page is dark, read from the color the last frame cleared to (the root's fill).

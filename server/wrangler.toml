@@ -1,0 +1,14 @@
+name = "reader-sync"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+observability = { enabled = true }
+
+[[d1_databases]]
+binding = "DB"
+database_name = "reader"
+database_id = "fab44527-9f97-4f7f-b234-626802cc5a68"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "BLOBS"
+id = "fd73af785f2e435a8b04306346fcb855"

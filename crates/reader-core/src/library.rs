@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::book::{Book, BookId, Format, Position};
 use crate::import::{self, ImportError};
 use crate::settings::Settings;
+use crate::sync::RemoteBook;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
@@ -26,6 +27,10 @@ pub struct Entry {
     pub format: Format,
     #[serde(default)]
     pub position: Position,
+    /// When the position last changed here, in milliseconds since the Unix epoch. Devices keep
+    /// the position with the later stamp.
+    #[serde(default)]
+    pub position_at: u64,
     /// Seconds since the Unix epoch.
     pub added: u64,
     /// How many chapters the book has, for the progress line on its cover.
@@ -106,6 +111,7 @@ impl Library {
                     author: book.author.clone(),
                     format: book.format,
                     position: Position::default(),
+                    position_at: 0,
                     added: now(),
                     chapters: book.chapters,
                     cover: book.cover.clone(),
@@ -135,7 +141,21 @@ impl Library {
             return Ok(());
         }
         entry.position = position;
+        entry.position_at = now_millis().max(entry.position_at + 1);
         self.save()
+    }
+
+    /// Takes in what a sync brought back. Books whose id is `skip` keep their position, since
+    /// the reader is on them right now; the next sync settles it. True when anything changed.
+    pub fn apply_remote(&mut self, books: &[RemoteBook], skip: Option<&BookId>) -> io::Result<bool> {
+        let mut changed = false;
+        for book in books.iter().filter(|b| Some(&b.id) != skip) {
+            changed |= merge_remote(&mut self.entries, book);
+        }
+        if changed {
+            self.save()?;
+        }
+        Ok(changed)
     }
 
     fn save(&self) -> io::Result<()> {
@@ -205,8 +225,45 @@ fn store(dir: &Path, book: &Book) -> io::Result<()> {
     write_atomic(&book_path(dir, &book.id), &serde_json::to_vec(book).map_err(io::Error::other)?)
 }
 
-fn book_path(dir: &Path, id: &BookId) -> PathBuf {
+pub(crate) fn book_path(dir: &Path, id: &BookId) -> PathBuf {
     dir.join("books").join(format!("{}.json", id.0))
+}
+
+/// Applies what the server knows about a book to `entries`: adds it if new, takes its position if
+/// it's later, and takes a cover this device lacks. True when anything changed.
+pub(crate) fn merge_remote(entries: &mut Vec<Entry>, remote: &RemoteBook) -> bool {
+    let Some(entry) = entries.iter_mut().find(|e| e.id == remote.id) else {
+        entries.insert(
+            0,
+            Entry {
+                id: remote.id.clone(),
+                title: remote.title.clone(),
+                author: remote.author.clone(),
+                format: remote.format,
+                position: remote.position(),
+                position_at: remote.position_at,
+                added: remote.added,
+                chapters: remote.chapters,
+                cover: remote.cover.clone(),
+            },
+        );
+        return true;
+    };
+    let mut changed = false;
+    if remote.position_at > entry.position_at {
+        entry.position = remote.position();
+        entry.position_at = remote.position_at;
+        changed = true;
+    }
+    if entry.cover.is_none() && remote.cover.is_some() {
+        entry.cover = remote.cover.clone();
+        changed = true;
+    }
+    changed
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 fn now() -> u64 {

@@ -38,6 +38,34 @@ final class ReaderViewController: UIViewController, RuneViewDelegate, UIDocument
         present(picker, animated: true)
     }
 
+    func runeView(_ view: RuneView, wantsCredentialsToCreate create: Bool) {
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(
+            title: create ? "Create account" : "Sign in",
+            message: create ? "Use at least 8 characters for your password." : nil,
+            preferredStyle: .alert
+        )
+        alert.addTextField {
+            $0.placeholder = "Email"
+            $0.keyboardType = .emailAddress
+            $0.textContentType = .username
+            $0.autocapitalizationType = .none
+            $0.autocorrectionType = .no
+        }
+        alert.addTextField {
+            $0.placeholder = "Password"
+            $0.isSecureTextEntry = true
+            $0.textContentType = create ? .newPassword : .password
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: create ? "Create" : "Sign in", style: .default) { [weak self, weak alert] _ in
+            let email = alert?.textFields?.first?.text ?? ""
+            let password = alert?.textFields?.last?.text ?? ""
+            self?.rune.submitCredentials(email: email, password: password, create: create)
+        })
+        present(alert, animated: true)
+    }
+
     func runeView(_ view: RuneView, pageDark: Bool) {
         setNeedsStatusBarAppearanceUpdate()
     }

@@ -8,6 +8,7 @@ pub mod library;
 mod pdf;
 pub mod scan;
 pub mod settings;
+pub mod sync;
 
 pub use book::{Block, Book, BookId, Chapter, Format, Position};
 pub use import::ImportError;

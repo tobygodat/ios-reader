@@ -8,6 +8,7 @@ let log = Logger(subsystem: "com.tobygodat.reader", category: "host")
 protocol RuneViewDelegate: AnyObject {
     func runeViewWantsBook(_ view: RuneView)
     func runeViewWantsFolder(_ view: RuneView)
+    func runeView(_ view: RuneView, wantsCredentialsToCreate create: Bool)
     func runeView(_ view: RuneView, pageDark: Bool)
 }
 
@@ -59,6 +60,11 @@ final class RuneView: UIView {
         observers.forEach(NotificationCenter.default.removeObserver)
         link?.invalidate()
         reader_host_free(host)
+    }
+
+    func submitCredentials(email: String, password: String, create: Bool) {
+        guard let host else { return }
+        email.withCString { e in password.withCString { p in reader_host_submit_credentials(host, e, p, create) } }
     }
 
     func searchFolder(at url: URL) {
@@ -187,6 +193,10 @@ final class RuneView: UIView {
                 delegate?.runeViewWantsBook(self)
             case READER_REQUEST_PICK_FOLDER:
                 delegate?.runeViewWantsFolder(self)
+            case READER_REQUEST_SIGN_IN:
+                delegate?.runeView(self, wantsCredentialsToCreate: false)
+            case READER_REQUEST_CREATE_ACCOUNT:
+                delegate?.runeView(self, wantsCredentialsToCreate: true)
             default:
                 log.error("unknown request \(request.rawValue)")
             }

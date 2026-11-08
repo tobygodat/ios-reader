@@ -290,3 +290,38 @@ fn the_mac_searches_the_usual_folders() {
     assert!(folders.contains(&PathBuf::from("/Users/r/Downloads")));
     assert!(folders.iter().any(|f| f.ends_with("com~apple~CloudDocs")));
 }
+
+fn wait_until(rt: &mut Runtime<State>, what: &str, done: impl Fn(&State) -> bool) {
+    for _ in 0..1000 {
+        rt.frame(1.0 / 60.0);
+        if done(&rt.state) {
+            settle(rt, 2);
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("{what} never happened");
+}
+
+#[test]
+fn nothing_syncs_until_someone_signs_in_and_a_failed_sign_in_explains_itself() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let mut rt = runtime(&data);
+    assert!(rt.state.account.session().is_none());
+    settle(&mut rt, 10);
+    assert_eq!(rt.state.account.status, SyncStatus::Idle, "signed out, no sync starts");
+    assert!(!data.join("account.json").exists());
+
+    rt.state.account.set_api("http://127.0.0.1:1");
+    click(&mut rt, "account");
+    assert!(matches!(rt.state.screen, Screen::Account(_)));
+    rt.update(|s, _| s.submit_credentials("a@b.co".into(), "correct horse".into(), false));
+    wait_until(&mut rt, "the failure", |s| matches!(&s.screen, Screen::Account(f) if f.error.is_some()));
+    let Screen::Account(form) = &rt.state.screen else { panic!("left the account screen") };
+    assert!(form.error.as_deref().unwrap().contains("Couldn’t reach"), "{:?}", form.error);
+    assert!(!form.busy);
+    assert!(rt.state.account.session().is_none());
+    key(&mut rt, Key::Escape);
+    assert!(matches!(rt.state.screen, Screen::Library));
+}

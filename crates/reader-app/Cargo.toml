@@ -10,6 +10,7 @@ doctest = false
 [dependencies]
 reader-core.workspace = true
 rune.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

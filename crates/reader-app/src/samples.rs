@@ -30,6 +30,10 @@ pub const SCENES: &[Scene] = &[
         shelf(s, "found-nothing");
         s.screen = Screen::Finding(Finding::Results(Vec::new()));
     }),
+    ("sync", |s| {
+        shelf(s, "sync");
+        s.open_account();
+    }),
     ("reading-paper", |s| reading(s, PageTheme::Paper)),
     ("reading-sepia", |s| reading(s, PageTheme::Sepia)),
     ("reading-sage", |s| reading(s, PageTheme::Sage)),

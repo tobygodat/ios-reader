@@ -11,6 +11,8 @@ typedef enum {
     READER_REQUEST_NONE = 0,
     READER_REQUEST_PICK_BOOK = 1,
     READER_REQUEST_PICK_FOLDER = 2,
+    READER_REQUEST_SIGN_IN = 3,
+    READER_REQUEST_CREATE_ACCOUNT = 4,
 } ReaderRequest;
 
 typedef enum {
@@ -47,6 +49,9 @@ ReaderRequest reader_host_take_request(ReaderHost *host);
 
 // A file the document picker returned, already copied into the app's sandbox.
 void reader_host_import(ReaderHost *host, const char *path);
+
+// Signs in with, or creates an account from, what the host asked for.
+void reader_host_submit_credentials(ReaderHost *host, const char *email, const char *password, bool create);
 
 // Searches a folder for books. The host keeps the folder readable until the next search.
 void reader_host_search_folder(ReaderHost *host, const char *path);

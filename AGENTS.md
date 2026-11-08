@@ -32,6 +32,15 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - The Mac searches `desktop_folders`. iOS can't read outside the sandbox, so the shell asks for a folder and holds its security scope until the next search, since chosen books are read from it in place.
 - iCloud files not yet downloaded are hidden placeholders on iOS and are skipped.
 
+## Sync
+
+- Optional. Signed out, nothing leaves the device. `crates/reader-app/src/account.rs` holds the account and when a sync runs; `reader_core::sync` holds the merge and the HTTP client, which uses the OS's TLS.
+- Every device keeps a full local copy. Book text and covers move once, named by content hash. Each book's position carries `position_at`, and the later stamp wins. Books can't be deleted yet, so there are no tombstones.
+- `server/` is the Cloudflare Worker at `reader-sync.tobygodat.workers.dev`: D1 for accounts and rows, KV for book text and covers (R2 isn't enabled on the account). Migrations are in `server/migrations`.
+- Worker tests: `cd server && bun run dev`, then in another shell `bun test test/`. Add `READER_API=<url>` to run them against a deployed Worker, and delete the `@example.com` accounts they leave.
+- Live client test: `READER_API=https://reader-sync.tobygodat.workers.dev cargo test -p reader-core --test sync_live`.
+- The iOS shell has no keyboard for Rune fields, so sign-in there is a native alert. A new build with sign-in needs no demo account for Beta App Review only while sign-in stays optional.
+
 ## TestFlight
 
 - `scripts/testflight.sh` archives in Release and uploads with the Apple ID signed in to Xcode. `scripts/testflight.sh export` stops at the signed `.ipa`. The build number is the commit count, so commit first.

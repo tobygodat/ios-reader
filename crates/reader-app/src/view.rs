@@ -3,11 +3,11 @@
 
 use reader_core::{Entry, FontChoice, LineSpacing, PageMode, PageTheme, Settings};
 use rune::tok::motion;
-use rune::{Align, Color, Cursor, Cx, El, Image, Phase, ScrollPos, ScrollSpec, Side, SurfaceFit, TextStyle, Transition, Tx, col, el, row, text};
+use rune::{Align, Color, Cursor, Cx, El, Image, Phase, ScrollPos, ScrollSpec, Side, SurfaceFit, TextStyle, Transition, Tx, col, el, row, text, text_input};
 
 use crate::look::{Kind, Palette, SANS, SERIF, Type, blend, display_title, label_family};
 use crate::paginate::Piece;
-use crate::{Candidate, Finding, Flow, Host, Import, Panel, Reading, SCROLL_KEY, Screen, State, progress_text};
+use crate::{AccountForm, Candidate, Finding, Flow, Host, SyncStatus, Import, Panel, Reading, SCROLL_KEY, Screen, State, progress_text};
 
 const TOP_BAR: f32 = 52.0;
 const BOTTOM_LINE: f32 = 40.0;
@@ -35,6 +35,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Library => library(s, cx, &pal),
         Screen::Reading(r) => reader(s, r, cx, &pal, &mut layers),
         Screen::Finding(finding) => finding_view(s, finding, &pal),
+        Screen::Account(form) => account_view(s, form, &pal),
     };
     let mut root = col()
         .key("root")
@@ -110,7 +111,8 @@ fn library(s: &State, cx: &mut Cx<State>, pal: &Palette) -> El {
             .gap(18.0)
             .pb(top_pad)
             .child(text("Nothing to read yet.").font(TextStyle::new(22.0, 400.0).family(SERIF)).color(pal.muted))
-            .child(button("import-empty", "Import a book", pal).on_press_tx(|s: &mut State, tx: &mut Tx| s.ask_for_book(tx)));
+            .child(button("import-empty", "Import a book", pal).on_press_tx(|s: &mut State, tx: &mut Tx| s.ask_for_book(tx)))
+            .child(account_link(s, pal));
         if s.host == Host::Desktop {
             empty = empty.child(text("or drop an EPUB or PDF here").font(ui(13.0, 400.0)).color(pal.faint));
         }
@@ -121,11 +123,120 @@ fn library(s: &State, cx: &mut Cx<State>, pal: &Palette) -> El {
         let cols = ((avail + gap) / (150.0 + gap)).floor().max(2.0);
         let tile_w = ((avail - gap * (cols - 1.0)) / cols).min(190.0).floor();
         let grid = row().key("shelf").w_full().flex_wrap().gaps(36.0, gap).children(entries.iter().map(|e| cover(e, s.covers.get(&e.id), tile_w, pal)));
-        let content = col().w_full().px(m).pl(m + left).pr(m + right).pt(top_pad).pb(48.0 + bottom).gap(28.0).child(header).children(status).child(grid);
+        let content = col().w_full().px(m).pl(m + left).pr(m + right).pt(top_pad).pb(28.0 + bottom).gap(28.0).child(header).children(status).child(grid).child(account_link(s, pal));
         col().key("library").w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(content)
     };
     let _ = cx;
     col().w_full().h_full().child(body)
+}
+
+/// The way into sync from the library: quiet, since most of the screen is the books.
+fn account_link(s: &State, pal: &Palette) -> El {
+    let label = match (s.account.session(), &s.account.status) {
+        (None, _) => "Sync across devices".to_string(),
+        (Some(_), SyncStatus::Running) => "Syncing…".to_string(),
+        (Some(_), SyncStatus::Failed(_)) => "Sync paused".to_string(),
+        (Some(session), _) => format!("Synced as {}", session.email),
+    };
+    row()
+        .key("account")
+        .role("button")
+        .label(label.as_str())
+        .focusable(true)
+        .cursor(Cursor::Pointer)
+        .py(10.0)
+        .on_press(|s: &mut State| s.open_account())
+        .child(text(label).font(ui(13.0, 500.0)).color(pal.muted))
+}
+
+fn primary_button(key: &str, label: &str, enabled: bool, pal: &Palette) -> El {
+    let b = row()
+        .key(key)
+        .role("button")
+        .label(label)
+        .w_full()
+        .justify_center()
+        .py(13.0)
+        .radius(999.0)
+        .fill(if enabled { pal.ink } else { pal.track })
+        .child(text(label).font(ui(15.0, 600.0)).color(if enabled { pal.page } else { pal.muted }));
+    if enabled { b.focusable(true).cursor(Cursor::Pointer).press_scale(0.98) } else { b }
+}
+
+fn account_view(s: &State, form: &AccountForm, pal: &Palette) -> El {
+    let [top, right, bottom, left] = s.insets;
+    let m = margin(s.window[0]);
+    let top_pad = top.max(if s.host == Host::Desktop { 30.0 } else { 0.0 }) + 28.0;
+    let header = row()
+        .w_full()
+        .items_center()
+        .child(text("Sync").font(TextStyle::new(34.0, 500.0).family(SERIF)).color(pal.ink))
+        .child(el().grow(1.0))
+        .child(button("account-done", "Done", pal).on_press(|s: &mut State| s.close_account()));
+    let note = |words: &str| text(words.to_string()).font(ui(14.0, 400.0).lh(20.0)).color(pal.muted).wrap();
+    let column = col().key("account-screen").w_full().max_w(460.0).gap(16.0);
+    let error = form.error.as_deref().map(|e| text(e.to_string()).font(ui(14.0, 500.0).lh(20.0)).color(pal.ink).wrap());
+    let body = match s.account.session() {
+        None => {
+            let intro = note("Sign in to keep your books, your place in each one and your settings the same on all your devices. Each device also keeps its own copy, so reading still works offline.");
+            let enabled = !form.busy;
+            let mut create = primary_button("account-create", if form.busy { "One moment…" } else { "Create account" }, enabled, pal);
+            let mut sign_in = button("account-sign-in", "Sign in", pal);
+            let mut column = column.child(intro);
+            if s.host == Host::Desktop {
+                let field = |edit| {
+                    text_input(edit, ui(15.0, 400.0)).w_full().px(14.0).py(11.0).radius(10.0).border(1.0, pal.hairline)
+                };
+                column = column
+                    .child(field(&s.account.email_field).key("account-email").single_line().placeholder("Email", pal.faint).on_edit(|s: &mut State| &mut s.account.email_field))
+                    .child(field(&s.account.password_field).key("account-password").secure().placeholder("Password", pal.faint).on_edit(|s: &mut State| &mut s.account.password_field));
+                if enabled {
+                    create = create.on_press(|s: &mut State| s.submit_fields(true));
+                    sign_in = sign_in.on_press(|s: &mut State| s.submit_fields(false));
+                }
+            } else if enabled {
+                create = create.on_press(|s: &mut State| s.ask_for_credentials(true));
+                sign_in = sign_in.on_press(|s: &mut State| s.ask_for_credentials(false));
+            }
+            column
+                .children(error)
+                .child(create)
+                .child(row().w_full().justify_center().child(sign_in))
+                .child(note("There’s no password reset yet, so keep your password somewhere safe."))
+        }
+        Some(session) => {
+            let status = match &s.account.status {
+                SyncStatus::Running => "Syncing…".to_string(),
+                SyncStatus::Failed(why) => why.clone(),
+                SyncStatus::Done { skipped } if !skipped.is_empty() => format!("Up to date, except {}, which is too large to sync.", skipped.join(", ")),
+                _ => "Up to date.".to_string(),
+            };
+            let delete_label = if form.confirm_delete { "Press again to delete your account" } else { "Delete account" };
+            let mut delete = row()
+                .key("account-delete")
+                .role("button")
+                .label(delete_label)
+                .py(10.0)
+                .child(text(delete_label).font(ui(13.0, 500.0)).color(pal.muted));
+            let mut sync_now = button("account-sync", "Sync now", pal);
+            let mut sign_out = button("account-sign-out", "Sign out", pal);
+            if !form.busy {
+                delete = delete.focusable(true).cursor(Cursor::Pointer).on_press(|s: &mut State| s.delete_account());
+                sync_now = sync_now.on_press(|s: &mut State| s.sync_now());
+                sign_out = sign_out.on_press(|s: &mut State| s.sign_out());
+            }
+            let mut column = column
+                .child(text(session.email.clone()).font(TextStyle::new(18.0, 500.0).family(SERIF)).color(pal.ink).truncate())
+                .child(note(&status))
+                .children(error)
+                .child(row().gap(8.0).child(sync_now).child(sign_out));
+            if form.confirm_delete {
+                column = column.child(note("This removes your account and everything stored in it. The books on this device stay."));
+            }
+            column.child(delete)
+        }
+    };
+    col().key("account-page").w_full().grow(1.0).min_h(0.0).px(m).pl(m + left).pr(m + right).pt(top_pad).pb(bottom + 20.0).gap(22.0).child(header).child(body)
 }
 
 fn finding_view(s: &State, finding: &Finding, pal: &Palette) -> El {

@@ -6,6 +6,7 @@
 //! - [`take_request`] after each frame: something only the host can do (the iOS document picker).
 //! - [`import`] with a file the host picked.
 //! - [`search_folder`] with a folder the host picked.
+//! - [`submit_credentials`] with an email and password the host asked for.
 //! - [`set_insets`] with the screen's safe-area insets (iOS; Rune reports zero on native).
 
 use std::cell::Cell;
@@ -15,10 +16,12 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+pub use account::{Account, AccountForm, SyncStatus};
 use reader_core::scan::{self, Found};
 use reader_core::{Book, BookId, ImportError, Library, PageMode, Position, Prepared, Settings};
 use rune::{AppSpec, Image, ImageCache, Key, KeyEvent, LiveText, ScrollPos, Tx, Waker};
 
+mod account;
 mod look;
 mod paginate;
 mod samples;
@@ -39,6 +42,8 @@ pub enum HostRequest {
     PickBook,
     /// A folder to search for books. iOS only lets an app read what the person picks.
     PickFolder,
+    /// An email and password. The Rune fields have no keyboard on iOS, so the host asks natively.
+    AskCredentials { create: bool },
 }
 
 struct Config {
@@ -67,6 +72,7 @@ pub enum Screen {
     Library,
     Reading(Box<Reading>),
     Finding(Finding),
+    Account(AccountForm),
 }
 
 /// Looking through folders for books, then choosing which to add.
@@ -211,6 +217,7 @@ pub struct State {
     covers_ready: usize,
     /// What a search found, until the next frame takes it.
     search_results: Arc<Mutex<Option<Vec<Found>>>>,
+    pub account: Account,
 }
 
 const DEFAULT_SIZE: (f32, f32) = (1100.0, 760.0);
@@ -243,6 +250,7 @@ impl State {
             covers: HashMap::new(),
             covers_ready: 0,
             search_results: Arc::default(),
+            account: Account::open(dir),
         }
     }
 
@@ -258,6 +266,11 @@ impl State {
             Screen::Reading(r) => Some(r),
             _ => None,
         }
+    }
+
+    /// Asks the iOS host for an email and password. The desktop has its own fields.
+    pub fn ask_for_credentials(&mut self, create: bool) {
+        self.requests.push_back(HostRequest::AskCredentials { create });
     }
 
     /// Asks for a book: Rune's file dialog on the desktop, the host's picker on iOS.
@@ -367,7 +380,10 @@ impl State {
         }
         for result in done {
             let failed = match result {
-                Ok(book) => self.library.add(&book).err().map(|e| format!("The book couldn’t be saved: {e}.")),
+                Ok(book) => {
+                    self.account.want_sync();
+                    self.library.add(&book).err().map(|e| format!("The book couldn’t be saved: {e}."))
+                }
                 Err(e) => Some(e.to_string()),
             };
             self.import = match (&self.import, failed) {
@@ -412,6 +428,7 @@ impl State {
         r.dirty_since = None;
         if position != r.saved && self.library.set_position(&r.id, position).is_ok() {
             r.saved = position;
+            self.account.want_sync();
         }
     }
 
@@ -504,6 +521,7 @@ impl State {
             return;
         }
         let _ = self.library.save_settings(&self.settings);
+        self.account.settings_changed();
         let mode = self.settings.mode;
         if let Some(r) = self.reading_mut()
             && mode != before.mode
@@ -533,6 +551,11 @@ impl State {
 
 pub fn take_request(state: &mut State) -> Option<HostRequest> {
     state.requests.pop_front()
+}
+
+/// Signs in with what the host asked for, or creates an account from it.
+pub fn submit_credentials(state: &mut State, email: String, password: String, create: bool) {
+    state.submit_credentials(email, password, create);
 }
 
 /// Searches a folder the host picked. The host keeps it readable until the next search.
@@ -579,6 +602,8 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = s.take_imports();
     changed |= s.load_covers();
     changed |= s.take_search();
+    changed |= s.take_finished();
+    s.sync_if_due(now, tx);
     if let Some(by) = s.take_release() {
         s.turn(by);
         changed = true;
@@ -641,9 +666,18 @@ pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
         s.ask_for_book(tx);
         return true;
     }
-    if matches!(s.screen, Screen::Finding(_)) && ev.key == Key::Escape {
-        s.close_finding();
-        return true;
+    if ev.key == Key::Escape {
+        match s.screen {
+            Screen::Finding(_) => {
+                s.close_finding();
+                return true;
+            }
+            Screen::Account(_) => {
+                s.close_account();
+                return true;
+            }
+            _ => {}
+        }
     }
     let mode = s.settings.mode;
     let Some(r) = s.reading() else { return false };
