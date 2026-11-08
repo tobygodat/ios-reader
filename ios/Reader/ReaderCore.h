@@ -19,9 +19,15 @@ typedef enum {
     READER_TOUCH_CANCELLED = 3,
 } ReaderTouchPhase;
 
+// Called on the main thread when the view wants frames again after the host paused its
+// display link: background work (a parse) finished, or a timer came due. Never called after
+// `reader_host_free`.
+typedef void (*ReaderWakeFn)(void *context);
+
 // `layer` is a CAMetalLayer*. `data_dir` is a UTF-8 path the library is kept in.
-// Returns NULL on failure.
-ReaderHost *reader_host_new(void *layer, float width, float height, float scale, bool dark, const char *data_dir);
+// `wake` may be NULL. Returns NULL on failure.
+ReaderHost *reader_host_new(void *layer, float width, float height, float scale, bool dark, const char *data_dir,
+                            ReaderWakeFn wake, void *wake_context);
 void reader_host_free(ReaderHost *host);
 
 void reader_host_resize(ReaderHost *host, float width, float height, float scale);
@@ -40,3 +46,6 @@ ReaderRequest reader_host_take_request(ReaderHost *host);
 
 // A file the document picker returned, already copied into the app's sandbox.
 void reader_host_import(ReaderHost *host, const char *path);
+
+// Whether the page the last frame drew is dark, so the status bar can match it.
+bool reader_host_page_dark(ReaderHost *host);
