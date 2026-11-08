@@ -230,7 +230,13 @@ fn reader(s: &State, r: &Reading, cx: &mut Cx<State>, pal: &Palette, layers: &mu
     if r.panel == Some(Panel::Appearance) {
         layers.push(appearance(s, pal));
     }
-    el().key("reader").w_full().h_full().child(content).child(progress).child(bar)
+    let mut screen = el().key("reader").w_full().h_full().child(content).child(progress);
+    if top > 0.0 {
+        screen = screen.child(
+            el().key("status-guard").pin(Some(0.0), Some(0.0), Some(0.0), None).h(top).fill(pal.page).inert().child(fade(pal, true).absolute(0.0, top)),
+        );
+    }
+    screen.child(bar)
 }
 
 fn top_bar(r: &Reading, cx: &mut Cx<State>, pal: &Palette, top: f32) -> El {

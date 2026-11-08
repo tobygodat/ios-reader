@@ -47,8 +47,8 @@ impl Palette {
             hairline: blend(page, ink, 0.14),
             tile: blend(page, ink, if spec.dark { 0.08 } else { 0.055 }),
             raised: if spec.dark { blend(page, ink, 0.07) } else { blend(page, Color::WHITE, 0.6) },
-            track: blend(page, ink, if spec.dark { 0.15 } else { 0.055 }),
-            selected: if spec.dark { blend(page, ink, 0.28) } else { blend(page, Color::WHITE, 0.6) },
+            track: blend(page, ink, if spec.dark { 0.16 } else { 0.055 }),
+            selected: if spec.dark { blend(page, ink, 0.36) } else { blend(page, Color::WHITE, 0.6) },
             shadow: Color::BLACK.alpha(if spec.dark { 0.45 } else { 0.12 }),
             dark: spec.dark,
         }
