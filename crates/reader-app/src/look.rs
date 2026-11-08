@@ -21,6 +21,9 @@ pub struct Palette {
     pub tile: Color,
     /// The appearance panel, lifted off the page.
     pub raised: Color,
+    /// A control's track inside the panel, and the chosen segment on it.
+    pub track: Color,
+    pub selected: Color,
     pub shadow: Color,
     pub dark: bool,
 }
@@ -44,6 +47,8 @@ impl Palette {
             hairline: blend(page, ink, 0.14),
             tile: blend(page, ink, if spec.dark { 0.08 } else { 0.055 }),
             raised: if spec.dark { blend(page, ink, 0.07) } else { blend(page, Color::WHITE, 0.6) },
+            track: blend(page, ink, if spec.dark { 0.15 } else { 0.055 }),
+            selected: if spec.dark { blend(page, ink, 0.28) } else { blend(page, Color::WHITE, 0.6) },
             shadow: Color::BLACK.alpha(if spec.dark { 0.45 } else { 0.12 }),
             dark: spec.dark,
         }
@@ -130,14 +135,15 @@ impl Kind {
 pub fn display_title(raw: &str) -> String {
     let t = raw.trim().trim_end_matches('.').trim();
     let letters: Vec<char> = t.chars().filter(|c| c.is_alphabetic()).collect();
-    let shouting = letters.len() > 3 && letters.iter().all(|c| c.is_uppercase());
+    let upper = letters.iter().filter(|c| c.is_uppercase()).count();
+    let shouting = letters.len() > 3 && upper * 4 >= letters.len() * 3;
     if !shouting {
         return t.to_string();
     }
     t.split(' ')
         .map(|w| {
             let roman = !w.is_empty() && w.chars().all(|c| matches!(c, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M' | '.' | ','));
-            if roman {
+            if roman || w.chars().any(char::is_lowercase) {
                 return w.to_string();
             }
             let mut cs = w.chars();
@@ -165,6 +171,17 @@ mod tests {
         assert_eq!(display_title("Chapter I."), "Chapter I");
         assert_eq!(display_title("THE FULL LICENSE"), "The Full License");
         assert_eq!(display_title("Pages 1–10"), "Pages 1–10");
+        assert_eq!(display_title("PRIDE. and PREJUDICE"), "Pride. and Prejudice");
+    }
+
+    #[test]
+    fn controls_stand_off_the_panel_in_every_theme() {
+        for theme in PageTheme::ALL {
+            let p = Palette::of(theme);
+            let l = |c: Color| c.to_oklab()[0];
+            assert!((l(p.track) - l(p.raised)).abs() > 0.02, "{theme:?}: track vs panel");
+            assert!((l(p.selected) - l(p.track)).abs() > 0.02, "{theme:?}: chosen segment vs track");
+        }
     }
 
     #[test]

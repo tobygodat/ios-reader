@@ -467,7 +467,7 @@ fn appearance(s: &State, pal: &Palette) -> El {
             .h(36.0)
             .center()
             .radius(9.0)
-            .fill(pal.tile)
+            .fill(pal.track)
             .hover(pal.ink.alpha(0.05))
             .press(pal.ink.alpha(0.09))
             .opacity(if enabled { 1.0 } else { 0.4 })
@@ -568,7 +568,7 @@ fn segmented<T: Copy + PartialEq + 'static, const N: usize>(
     current: T,
     apply: fn(&mut Settings, T),
 ) -> El {
-    row().key(key).role("radiogroup").focus_group().w_full().h(40.0).padding(3.0).gap(3.0).radius(11.0).fill(pal.tile).children(options.into_iter().enumerate().map(|(i, (value, label))| {
+    row().key(key).role("radiogroup").focus_group().w_full().h(40.0).padding(3.0).gap(3.0).radius(11.0).fill(pal.track).children(options.into_iter().enumerate().map(|(i, (value, label))| {
         let on = value == current;
         row()
             .key(format!("{key}-{i}"))
@@ -580,7 +580,7 @@ fn segmented<T: Copy + PartialEq + 'static, const N: usize>(
             .h_full()
             .center()
             .radius(8.0)
-            .fill(if on { pal.raised } else { Color::TRANSPARENT })
+            .fill(if on { pal.selected } else { Color::TRANSPARENT })
             .shadow(if on { 1.0 } else { 0.0 }, if on { 3.0 } else { 0.0 }, if on { pal.shadow } else { Color::TRANSPARENT })
             .hover(pal.ink.alpha(0.04))
             .motion(motion::SNAP)
