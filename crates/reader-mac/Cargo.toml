@@ -7,6 +7,7 @@ version.workspace = true
 [[bin]]
 name = "reader"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 reader-app.workspace = true

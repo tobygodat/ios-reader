@@ -18,3 +18,88 @@ serde_json = "1"
 
 [profile.release]
 lto = "thin"
+
+# Book parsing, text layout and image decoding build optimized even in debug. The tests and the
+# debug app spend their time in these crates, which run 4 to 8 times faster this way, and edits
+# never rebuild them. The rest stays at opt-level 0: optimizing everything (`"*"`) doubled a
+# cold build to 92 s for no faster tests.
+[profile.dev.package.lopdf]
+opt-level = 2
+
+[profile.dev.package.pdf-extract]
+opt-level = 2
+
+[profile.dev.package.zip]
+opt-level = 2
+
+[profile.dev.package.miniz_oxide]
+opt-level = 2
+
+[profile.dev.package.flate2]
+opt-level = 2
+
+[profile.dev.package.fdeflate]
+opt-level = 2
+
+[profile.dev.package.quick-xml]
+opt-level = 2
+
+[profile.dev.package.encoding_rs]
+opt-level = 2
+
+[profile.dev.package.sha2]
+opt-level = 2
+
+[profile.dev.package.parley]
+opt-level = 2
+
+[profile.dev.package.parley_engine]
+opt-level = 2
+
+[profile.dev.package.harfrust]
+opt-level = 2
+
+[profile.dev.package.skrifa]
+opt-level = 2
+
+[profile.dev.package.read-fonts]
+opt-level = 2
+
+[profile.dev.package.font-types]
+opt-level = 2
+
+[profile.dev.package.fontique]
+opt-level = 2
+
+[profile.dev.package.swash]
+opt-level = 2
+
+[profile.dev.package.icu_segmenter]
+opt-level = 2
+
+[profile.dev.package.taffy]
+opt-level = 2
+
+[profile.dev.package.rune-taffy]
+opt-level = 2
+
+[profile.dev.package.png]
+opt-level = 2
+
+[profile.dev.package.image]
+opt-level = 2
+
+[profile.dev.package.zune-jpeg]
+opt-level = 2
+
+[profile.dev.package.tiny-skia]
+opt-level = 2
+
+[profile.dev.package.ttf-parser]
+opt-level = 2
+
+[profile.dev.package.unicode-segmentation]
+opt-level = 2
+
+[profile.dev.package.unicode-bidi]
+opt-level = 2

@@ -26,6 +26,12 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cargo run -p reader-core --example dump -- <file> [chapter]` prints what a book parses into.
 - `scripts/ios-build.sh` builds the iOS library, generates `ios/Reader.xcodeproj` with xcodegen, builds the simulator app and prints its path.
 
+## Build speed
+
+- The root `Cargo.toml` builds the parsing, text layout and image crates at `opt-level = 2` even in debug. If a test or the debug app spends its time in another dependency, add that crate to the list. Don't switch to `"*"`: it doubles a cold build and the tests run no faster.
+- This Mac runs cargo through sccache, set in `~/.cargo/config.toml`, not in the repo. A fresh worktree reuses most dependencies from it. Crates whose build scripts write to `OUT_DIR`, Rune among them, still rebuild in each worktree.
+- `lld` can't link against the macOS 27 SDK yet, so keep Apple's default linker.
+
 ## iOS notes
 
 - The Xcode project is generated. Edit `ios/project.yml`, not the `.xcodeproj`.
