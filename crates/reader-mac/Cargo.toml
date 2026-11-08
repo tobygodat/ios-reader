@@ -10,4 +10,4 @@ path = "src/main.rs"
 
 [dependencies]
 reader-app.workspace = true
-rune.workspace = true
+rune = { workspace = true, features = ["native-file-dialog"] }

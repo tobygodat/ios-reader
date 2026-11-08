@@ -102,6 +102,12 @@ impl Library {
         Ok(&self.entries[at])
     }
 
+    /// Stores an already parsed book and records it, as an import of its file would.
+    pub fn insert(&mut self, book: &Book) -> io::Result<&Entry> {
+        store(&self.dir, book)?;
+        self.add(&Prepared::of(book))
+    }
+
     pub fn load(&self, id: &BookId) -> io::Result<Book> {
         let bytes = fs::read(book_path(&self.dir, id))?;
         serde_json::from_slice(&bytes).map_err(io::Error::other)
@@ -150,12 +156,22 @@ pub fn prepare(dir: &Path, path: &Path) -> Result<Prepared, ImportError> {
         Some(book) => book,
         None => {
             let book = import::parse(path, &bytes)?;
-            let json = serde_json::to_vec(&book).map_err(|e| ImportError::Unreadable(e.to_string()))?;
-            fs::create_dir_all(dir.join("books")).and_then(|_| write_atomic(&stored, &json)).map_err(|e| ImportError::Unreadable(e.to_string().to_lowercase()))?;
+            store(dir, &book).map_err(|e| ImportError::Unreadable(e.to_string().to_lowercase()))?;
             book
         }
     };
-    Ok(Prepared { id, title: book.title, author: book.author, format: book.format, chapters: book.chapters.len() })
+    Ok(Prepared::of(&book))
+}
+
+impl Prepared {
+    fn of(book: &Book) -> Prepared {
+        Prepared { id: book.id.clone(), title: book.title.clone(), author: book.author.clone(), format: book.format, chapters: book.chapters.len() }
+    }
+}
+
+fn store(dir: &Path, book: &Book) -> io::Result<()> {
+    fs::create_dir_all(dir.join("books"))?;
+    write_atomic(&book_path(dir, &book.id), &serde_json::to_vec(book).map_err(io::Error::other)?)
 }
 
 fn book_path(dir: &Path, id: &BookId) -> PathBuf {

@@ -7,3 +7,8 @@ version.workspace = true
 [dependencies]
 reader-core.workspace = true
 rune.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+zip = { version = "9", default-features = false, features = ["deflate"] }
