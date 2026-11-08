@@ -1,0 +1,75 @@
+name: Reader
+options:
+  bundleIdPrefix: com.tobygodat
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+targets:
+  Reader:
+    type: application
+    platform: iOS
+    sources:
+      - path: Reader
+    preBuildScripts:
+      - name: Build Rust library
+        basedOnDependencyAnalysis: false
+        script: |
+          exec "$PROJECT_DIR/../scripts/ios-cargo.sh"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tobygodat.reader
+        PRODUCT_NAME: Reader
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_OBJC_BRIDGING_HEADER: Reader/ReaderCore.h
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        RUST_PROFILE: debug
+        RUST_TARGET_DIR: $(PROJECT_DIR)/../target
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(RUST_TARGET_DIR)/aarch64-apple-ios-sim/$(RUST_PROFILE)
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(RUST_TARGET_DIR)/aarch64-apple-ios/$(RUST_PROFILE)
+        OTHER_LDFLAGS:
+          - -lreader_ios
+          - -framework Metal
+          - -framework QuartzCore
+          - -framework CoreText
+          - -framework CoreGraphics
+          - -framework CoreFoundation
+          - -framework Foundation
+          - -framework UIKit
+      configs:
+        Release:
+          RUST_PROFILE: release
+    info:
+      path: Reader/Info.plist
+      properties:
+        CFBundleDisplayName: Reader
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIViewControllerBasedStatusBarAppearance: true
+        CADisableMinimumFrameDurationOnPhone: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: EPUB Book
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - org.idpf.epub-container
+          - CFBundleTypeName: PDF Document
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - com.adobe.pdf
