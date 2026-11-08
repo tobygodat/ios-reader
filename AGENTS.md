@@ -29,7 +29,7 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 ## iOS notes
 
 - The Xcode project is generated. Edit `ios/project.yml`, not the `.xcodeproj`.
-- C code built by Rust build scripts targets `IPHONEOS_DEPLOYMENT_TARGET=18.0`. cc-rs doesn't rebuild when that variable changes, so after changing it run `cargo clean -p blake3 --target <triple>`.
+- `.cargo/config.toml` sets `IPHONEOS_DEPLOYMENT_TARGET=18.0` for every cargo run. Keep it there, not in scripts: the objc2 and cc-rs crates rebuild whenever it changes, which cost 17 to 20 s a build when a bare `cargo build` and the Xcode build disagreed. After changing its value, run `cargo clean -p blake3 --target <triple>`, since cc-rs doesn't notice.
 - The Rune view draws its own controls, so the accessibility snapshot is empty. Drive the Simulator by coordinates in points.
 - Files copied into the app's Documents by shell don't show in the picker's folder view right away. Find them with the picker's search field.
 

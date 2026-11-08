@@ -1,0 +1,5 @@
+# Every cargo run sees the same iOS minimum. cc-rs and the objc2 crates rebuild whenever this
+# variable changes, so a bare `cargo build --target aarch64-apple-ios-sim` without it would
+# undo the Xcode build's cache, and the other way round.
+[env]
+IPHONEOS_DEPLOYMENT_TARGET = "18.0"
