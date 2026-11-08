@@ -56,6 +56,16 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed, String> {
     Ok(Parsed { title: package.title, author: package.author, chapters })
 }
 
+/// The title and author an EPUB's package file names, without reading its text. `None` for a
+/// file that isn't an EPUB.
+pub fn metadata(bytes: &[u8]) -> Option<(Option<String>, Option<String>)> {
+    let mut zip = Zip::open(bytes).ok()?;
+    let container = zip.read_text("META-INF/container.xml")?;
+    let opf_path = first_attr(&container, b"rootfile", b"full-path")?;
+    let package = Package::parse(&zip.read_text(&opf_path)?, &dir_of(&opf_path));
+    Some((package.title, package.author))
+}
+
 /// The cover image an EPUB names, if it names one in a format the app can draw.
 pub struct Cover {
     pub bytes: Vec<u8>,

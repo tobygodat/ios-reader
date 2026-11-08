@@ -7,6 +7,7 @@ let log = Logger(subsystem: "com.tobygodat.reader", category: "host")
 @MainActor
 protocol RuneViewDelegate: AnyObject {
     func runeViewWantsBook(_ view: RuneView)
+    func runeViewWantsFolder(_ view: RuneView)
     func runeView(_ view: RuneView, pageDark: Bool)
 }
 
@@ -58,6 +59,11 @@ final class RuneView: UIView {
         observers.forEach(NotificationCenter.default.removeObserver)
         link?.invalidate()
         reader_host_free(host)
+    }
+
+    func searchFolder(at url: URL) {
+        guard let host else { return }
+        url.path.withCString { reader_host_search_folder(host, $0) }
     }
 
     func importBook(at url: URL) {
@@ -179,6 +185,8 @@ final class RuneView: UIView {
                 return
             case READER_REQUEST_PICK_BOOK:
                 delegate?.runeViewWantsBook(self)
+            case READER_REQUEST_PICK_FOLDER:
+                delegate?.runeViewWantsFolder(self)
             default:
                 log.error("unknown request \(request.rawValue)")
             }

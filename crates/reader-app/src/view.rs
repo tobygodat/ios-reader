@@ -7,7 +7,7 @@ use rune::{Align, Color, Cursor, Cx, El, Image, Phase, ScrollPos, ScrollSpec, Si
 
 use crate::look::{Kind, Palette, SANS, SERIF, Type, blend, display_title, label_family};
 use crate::paginate::Piece;
-use crate::{Flow, Host, Import, Panel, Reading, SCROLL_KEY, Screen, State, progress_text};
+use crate::{Candidate, Finding, Flow, Host, Import, Panel, Reading, SCROLL_KEY, Screen, State, progress_text};
 
 const TOP_BAR: f32 = 52.0;
 const BOTTOM_LINE: f32 = 40.0;
@@ -34,6 +34,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let screen = match &s.screen {
         Screen::Library => library(s, cx, &pal),
         Screen::Reading(r) => reader(s, r, cx, &pal, &mut layers),
+        Screen::Finding(finding) => finding_view(s, finding, &pal),
     };
     let mut root = col()
         .key("root")
@@ -94,6 +95,8 @@ fn library(s: &State, cx: &mut Cx<State>, pal: &Palette) -> El {
         .items_center()
         .child(text("Library").font(TextStyle::new(34.0, 500.0).family(SERIF)).color(pal.ink))
         .child(el().grow(1.0))
+        .gap(8.0)
+        .child(button("find", "Find books", pal).on_press(|s: &mut State| s.find_books()))
         .child(import);
     let status = import_status(&s.import, pal);
     let entries = s.library.entries();
@@ -123,6 +126,100 @@ fn library(s: &State, cx: &mut Cx<State>, pal: &Palette) -> El {
     };
     let _ = cx;
     col().w_full().h_full().child(body)
+}
+
+fn finding_view(s: &State, finding: &Finding, pal: &Palette) -> El {
+    let [top, right, bottom, left] = s.insets;
+    let m = margin(s.window[0]);
+    let top_pad = top.max(if s.host == Host::Desktop { 30.0 } else { 0.0 }) + 28.0;
+    let header = row()
+        .w_full()
+        .items_center()
+        .child(text("Find books").font(TextStyle::new(34.0, 500.0).family(SERIF)).color(pal.ink))
+        .child(el().grow(1.0))
+        .child(button("find-cancel", "Cancel", pal).on_press(|s: &mut State| s.close_finding()));
+    let page = col().key("finding").w_full().grow(1.0).min_h(0.0).px(m).pl(m + left).pr(m + right).pt(top_pad).gap(18.0);
+    let note = |words: String| text(words).font(ui(14.0, 400.0)).color(pal.muted).wrap();
+    let candidates = match finding {
+        Finding::Searching => {
+            return page.child(header).child(note("Looking through your files. Nothing leaves this device.".into()));
+        }
+        Finding::Results(candidates) if candidates.is_empty() => {
+            let words = match s.host {
+                Host::Desktop => "No new books in Documents, Downloads, Desktop, Books or iCloud Drive.",
+                Host::Ios => "No new books in that folder. Files still in iCloud need downloading first.",
+            };
+            return page.child(header).child(note(words.into()));
+        }
+        Finding::Results(candidates) => candidates,
+    };
+    let rows = candidates.iter().enumerate().map(|(at, c)| candidate_row(at, c, pal));
+    let chosen = candidates.iter().filter(|c| c.chosen).count();
+    let add_label = match chosen {
+        0 => "Choose books to add".to_string(),
+        1 => "Add 1 book".to_string(),
+        n => format!("Add {n} books"),
+    };
+    let add = row()
+        .key("find-add")
+        .role("button")
+        .label(add_label.as_str())
+        .w_full()
+        .justify_center()
+        .py(13.0)
+        .radius(999.0)
+        .fill(if chosen > 0 { pal.ink } else { pal.track })
+        .child(text(add_label.as_str()).font(ui(15.0, 600.0)).color(if chosen > 0 { pal.page } else { pal.muted }));
+    let add = if chosen > 0 { add.focusable(true).cursor(Cursor::Pointer).press_scale(0.98).on_press(|s: &mut State| s.add_chosen()) } else { add };
+    let found = match candidates.len() {
+        1 => "Found 1 book you don’t have yet.".to_string(),
+        n => format!("Found {n} books you don’t have yet."),
+    };
+    page.pb(bottom + 20.0)
+        .child(header)
+        .child(note(format!("{found} Choose the ones to add. PDFs start unchecked, since they’re often not books.")))
+        .child(col().key("find-results").w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).children(rows))
+        .child(add)
+}
+
+fn candidate_row(at: usize, c: &Candidate, pal: &Palette) -> El {
+    let f = &c.found;
+    let kind = match f.format {
+        reader_core::Format::Epub => "EPUB",
+        reader_core::Format::Pdf => "PDF",
+    };
+    let size = if f.bytes >= 1_000_000 { format!("{:.1} MB", f.bytes as f32 / 1e6) } else { format!("{} KB", (f.bytes / 1000).max(1)) };
+    let mut detail: Vec<&str> = vec![kind];
+    if let Some(author) = &f.author {
+        detail.push(author);
+    }
+    if !f.folder.is_empty() {
+        detail.push(&f.folder);
+    }
+    detail.push(&size);
+    let mut mark = el().w(22.0).h(22.0).radius(6.0).center();
+    mark = if c.chosen { mark.fill(pal.ink).child(text("\u{2713}").font(ui(14.0, 600.0)).color(pal.page)) } else { mark.border(1.5, pal.faint) };
+    row()
+        .key(format!("found-{at}"))
+        .role("checkbox")
+        .label(f.title.as_str())
+        .focusable(true)
+        .cursor(Cursor::Pointer)
+        .w_full()
+        .items_center()
+        .gap(14.0)
+        .py(12.0)
+        .hover(pal.ink.alpha(0.03))
+        .on_press(move |s: &mut State| s.toggle_candidate(at))
+        .child(mark)
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(3.0)
+                .child(text(f.title.as_str()).font(TextStyle::new(16.0, 500.0).family(SERIF).lh(21.0)).color(pal.ink).truncate())
+                .child(text(detail.join(" · ")).font(ui(12.5, 400.0)).color(pal.muted).truncate()),
+        )
 }
 
 fn import_status(import: &Import, pal: &Palette) -> Option<El> {
@@ -464,7 +561,7 @@ impl State {
     fn reading_flow_mut(&mut self) -> Option<&mut Flow> {
         match &mut self.screen {
             Screen::Reading(r) => Some(&mut r.flow),
-            Screen::Library => None,
+            _ => None,
         }
     }
 }

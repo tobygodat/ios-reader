@@ -21,6 +21,7 @@ use rune::embed::LayerHost;
 
 const REQUEST_NONE: u32 = 0;
 const REQUEST_PICK_BOOK: u32 = 1;
+const REQUEST_PICK_FOLDER: u32 = 2;
 
 pub struct ReaderHost {
     view: LayerHost<State>,
@@ -218,6 +219,7 @@ pub extern "C" fn reader_host_touch(host: *mut ReaderHost, id: u64, phase: u32, 
 pub extern "C" fn reader_host_take_request(host: *mut ReaderHost) -> u32 {
     with_host(host, REQUEST_NONE, |h| match reader_app::take_request(&mut h.view.runtime_mut().state) {
         Some(HostRequest::PickBook) => REQUEST_PICK_BOOK,
+        Some(HostRequest::PickFolder) => REQUEST_PICK_FOLDER,
         None => REQUEST_NONE,
     })
 }
@@ -228,6 +230,14 @@ pub extern "C" fn reader_host_take_request(host: *mut ReaderHost) -> u32 {
 pub unsafe extern "C" fn reader_host_import(host: *mut ReaderHost, path: *const c_char) {
     let Some(path) = path_arg(path) else { return };
     with_host(host, (), |h| h.view.runtime_mut().update(|s, _| reader_app::import(s, &path)));
+}
+
+/// # Safety
+/// `path` is a NUL-terminated path the host keeps readable until the next search.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn reader_host_search_folder(host: *mut ReaderHost, path: *const c_char) {
+    let Some(path) = path_arg(path) else { return };
+    with_host(host, (), |h| h.view.runtime_mut().update(|s, _| reader_app::search_folder(s, &path)));
 }
 
 /// Whether the page is dark, read from the color the last frame cleared to (the root's fill).

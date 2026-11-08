@@ -5,6 +5,9 @@ import UniformTypeIdentifiers
 @MainActor
 final class ReaderViewController: UIViewController, RuneViewDelegate, UIDocumentPickerDelegate {
     private let rune = RuneView()
+    /// The folder being searched. iOS allows reading it, and the books the person then chooses
+    /// from it, only while access is held.
+    private var searched: URL?
 
     override func loadView() {
         rune.delegate = self
@@ -27,12 +30,26 @@ final class ReaderViewController: UIViewController, RuneViewDelegate, UIDocument
         present(picker, animated: true)
     }
 
+    func runeViewWantsFolder(_ view: RuneView) {
+        guard presentedViewController == nil else { return }
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder])
+        picker.delegate = self
+        picker.allowsMultipleSelection = false
+        present(picker, animated: true)
+    }
+
     func runeView(_ view: RuneView, pageDark: Bool) {
         setNeedsStatusBarAppearanceUpdate()
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        urls.forEach(rune.importBook)
+        if let folder = urls.first, folder.hasDirectoryPath {
+            searched?.stopAccessingSecurityScopedResource()
+            searched = folder.startAccessingSecurityScopedResource() ? folder : nil
+            rune.searchFolder(at: folder)
+        } else {
+            urls.forEach(rune.importBook)
+        }
     }
 
     /// Files opened in place live outside the sandbox: copy them in before the library sees them.

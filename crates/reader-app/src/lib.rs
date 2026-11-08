@@ -5,6 +5,7 @@
 //! - [`spec`] builds the `AppSpec` both hosts run.
 //! - [`take_request`] after each frame: something only the host can do (the iOS document picker).
 //! - [`import`] with a file the host picked.
+//! - [`search_folder`] with a folder the host picked.
 //! - [`set_insets`] with the screen's safe-area insets (iOS; Rune reports zero on native).
 
 use std::cell::Cell;
@@ -14,6 +15,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use reader_core::scan::{self, Found};
 use reader_core::{Book, BookId, ImportError, Library, PageMode, Position, Prepared, Settings};
 use rune::{AppSpec, Image, ImageCache, Key, KeyEvent, LiveText, ScrollPos, Tx, Waker};
 
@@ -35,6 +37,8 @@ pub enum Host {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostRequest {
     PickBook,
+    /// A folder to search for books. iOS only lets an app read what the person picks.
+    PickFolder,
 }
 
 struct Config {
@@ -62,6 +66,27 @@ pub const FAMILIES: (&str, &str) = ("Inter", "JetBrains Mono");
 pub enum Screen {
     Library,
     Reading(Box<Reading>),
+    Finding(Finding),
+}
+
+/// Looking through folders for books, then choosing which to add.
+pub enum Finding {
+    Searching,
+    Results(Vec<Candidate>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Candidate {
+    pub found: Found,
+    pub chosen: bool,
+}
+
+impl Candidate {
+    /// EPUBs are almost always books; a folder's PDFs are as likely to be receipts.
+    fn of(found: Found) -> Candidate {
+        let chosen = found.format == reader_core::Format::Epub;
+        Candidate { found, chosen }
+    }
 }
 
 /// An import's progress, as the library shows it.
@@ -184,6 +209,8 @@ pub struct State {
     pub covers: HashMap<BookId, Image>,
     /// How many covers the shelf has drawn. A decode finishing rebuilds it.
     covers_ready: usize,
+    /// What a search found, until the next frame takes it.
+    search_results: Arc<Mutex<Option<Vec<Found>>>>,
 }
 
 const DEFAULT_SIZE: (f32, f32) = (1100.0, 760.0);
@@ -215,20 +242,21 @@ impl State {
             images: None,
             covers: HashMap::new(),
             covers_ready: 0,
+            search_results: Arc::default(),
         }
     }
 
     pub fn reading(&self) -> Option<&Reading> {
         match &self.screen {
             Screen::Reading(r) => Some(r),
-            Screen::Library => None,
+            _ => None,
         }
     }
 
     fn reading_mut(&mut self) -> Option<&mut Reading> {
         match &mut self.screen {
             Screen::Reading(r) => Some(r),
-            Screen::Library => None,
+            _ => None,
         }
     }
 
@@ -249,21 +277,87 @@ impl State {
 
     /// Parses `path` on a worker thread; the result lands in [`poll`].
     pub fn start_import(&mut self, path: PathBuf) {
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        self.start_imports(vec![path]);
+    }
+
+    /// Parses `paths` one at a time on a worker thread, so a large batch doesn't fill the memory
+    /// of a phone. Each result lands in [`poll`].
+    fn start_imports(&mut self, paths: Vec<PathBuf>) {
+        let Some(first) = paths.first() else { return };
+        let name = first.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let more = paths.len() - 1;
         self.import = match &self.import {
-            Import::Parsing { name: current, queued } => Import::Parsing { name: current.clone(), queued: queued + 1 },
-            _ => Import::Parsing { name, queued: 0 },
+            Import::Parsing { name: current, queued } => Import::Parsing { name: current.clone(), queued: queued + paths.len() },
+            _ => Import::Parsing { name, queued: more },
         };
         let dir = self.library.dir().to_path_buf();
         let inbox = self.inbox.clone();
         let waker = self.waker.clone();
         std::thread::spawn(move || {
-            let result = reader_core::prepare(&dir, &path);
-            inbox.lock().expect("import inbox lock").push(result);
+            for path in paths {
+                let result = reader_core::prepare(&dir, &path);
+                inbox.lock().expect("import inbox lock").push(result);
+                if let Some(wake) = &waker {
+                    wake();
+                }
+            }
+        });
+    }
+
+    /// Starts a search: the usual folders on the desktop, a folder the person picks on iOS.
+    pub fn find_books(&mut self) {
+        match self.host {
+            Host::Ios => self.requests.push_back(HostRequest::PickFolder),
+            Host::Desktop => {
+                let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+                self.search(desktop_folders(&home));
+            }
+        }
+    }
+
+    /// Searches `roots` on a worker thread; the result lands in [`poll`].
+    pub fn search(&mut self, roots: Vec<PathBuf>) {
+        self.screen = Screen::Finding(Finding::Searching);
+        let known = self.library.entries().iter().map(|e| e.id.clone()).collect();
+        let results = self.search_results.clone();
+        let waker = self.waker.clone();
+        std::thread::spawn(move || {
+            let found = scan::scan(&roots, &known);
+            *results.lock().expect("search results lock") = Some(found);
             if let Some(wake) = waker {
                 wake();
             }
         });
+    }
+
+    /// Adds a finished search's results to the screen, unless the person has already left it.
+    fn take_search(&mut self) -> bool {
+        let Some(found) = self.search_results.lock().expect("search results lock").take() else { return false };
+        let Screen::Finding(finding @ Finding::Searching) = &mut self.screen else { return false };
+        *finding = Finding::Results(found.into_iter().map(Candidate::of).collect());
+        true
+    }
+
+    /// Flips one search result between chosen and not.
+    pub fn toggle_candidate(&mut self, at: usize) {
+        if let Screen::Finding(Finding::Results(candidates)) = &mut self.screen
+            && let Some(candidate) = candidates.get_mut(at)
+        {
+            candidate.chosen = !candidate.chosen;
+        }
+    }
+
+    /// Leaves the search without adding anything.
+    pub fn close_finding(&mut self) {
+        self.screen = Screen::Library;
+    }
+
+    /// Imports the chosen results and goes back to the library to show them arriving.
+    pub fn add_chosen(&mut self) {
+        let Screen::Finding(Finding::Results(candidates)) = &self.screen else { return };
+        let paths = candidates.iter().filter(|c| c.chosen).map(|c| c.found.path.clone()).collect();
+        self.screen = Screen::Library;
+        self.start_imports(paths);
     }
 
     fn take_imports(&mut self) -> bool {
@@ -441,6 +535,16 @@ pub fn take_request(state: &mut State) -> Option<HostRequest> {
     state.requests.pop_front()
 }
 
+/// Searches a folder the host picked. The host keeps it readable until the next search.
+pub fn search_folder(state: &mut State, path: &Path) {
+    state.search(vec![path.to_path_buf()]);
+}
+
+/// Where a person's books tend to be on a Mac. The private ones ask for permission when read.
+pub fn desktop_folders(home: &Path) -> Vec<PathBuf> {
+    ["Documents", "Downloads", "Desktop", "Books", "Library/Mobile Documents/com~apple~CloudDocs"].iter().map(|f| home.join(f)).collect()
+}
+
 pub fn import(state: &mut State, path: &Path) {
     state.start_import(path.to_path_buf());
 }
@@ -474,6 +578,7 @@ const SAVE_AFTER: f64 = 0.8;
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = s.take_imports();
     changed |= s.load_covers();
+    changed |= s.take_search();
     if let Some(by) = s.take_release() {
         s.turn(by);
         changed = true;
@@ -534,6 +639,10 @@ pub(crate) fn progress_text(label: &str, fraction: f32) -> String {
 pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
     if ev.is_command('o') {
         s.ask_for_book(tx);
+        return true;
+    }
+    if matches!(s.screen, Screen::Finding(_)) && ev.key == Key::Escape {
+        s.close_finding();
         return true;
     }
     let mode = s.settings.mode;

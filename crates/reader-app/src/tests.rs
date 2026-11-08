@@ -236,3 +236,57 @@ fn a_swiped_page_slides_home_instead_of_jumping() {
     assert!(moving >= 5, "the page should travel over several frames, got {moving}: {from_rest:?}");
     assert!(from_rest.windows(2).all(|w| w[1].abs() <= w[0].abs() + 0.5), "and head home without jumping back: {from_rest:?}");
 }
+
+#[test]
+fn a_search_offers_books_and_adds_only_the_chosen_ones() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let shelf = tmp.path().join("shelf");
+    std::fs::create_dir_all(shelf.join("novels")).unwrap();
+    write_epub(&shelf.join("novels"));
+    std::fs::write(shelf.join("receipt.pdf"), b"%PDF-1.7 not really a book").unwrap();
+    let mut rt = runtime(&data);
+
+    rt.update(|s, _| s.search(vec![shelf.clone()]));
+    assert!(matches!(rt.state.screen, Screen::Finding(Finding::Searching)));
+    for _ in 0..600 {
+        rt.frame(1.0 / 60.0);
+        if matches!(rt.state.screen, Screen::Finding(Finding::Results(_))) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    settle(&mut rt, 2);
+    let Screen::Finding(Finding::Results(found)) = &rt.state.screen else { panic!("the search never finished") };
+    let summary: Vec<_> = found.iter().map(|c| (c.found.title.as_str(), c.chosen)).collect();
+    assert_eq!(summary, [("An Evening", true), ("receipt", false)], "EPUBs start chosen, PDFs don't");
+    assert!(rt.state.library.entries().is_empty(), "nothing is added until the reader asks");
+
+    click(&mut rt, "found-1");
+    click(&mut rt, "found-1");
+    click(&mut rt, "find-add");
+    assert!(matches!(rt.state.screen, Screen::Library));
+    wait_for_import(&mut rt);
+    let titles: Vec<_> = rt.state.library.entries().iter().map(|e| e.title.clone()).collect();
+    assert_eq!(titles, ["An Evening"], "the unchosen PDF stays out");
+}
+
+#[test]
+fn a_search_left_early_doesnt_pull_the_reader_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut rt = runtime(&tmp.path().join("data"));
+    rt.update(|s, _| s.search(vec![tmp.path().join("empty")]));
+    rt.update(|s, _| s.close_finding());
+    for _ in 0..40 {
+        rt.frame(1.0 / 60.0);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(matches!(rt.state.screen, Screen::Library));
+}
+
+#[test]
+fn the_mac_searches_the_usual_folders() {
+    let folders = desktop_folders(Path::new("/Users/r"));
+    assert!(folders.contains(&PathBuf::from("/Users/r/Downloads")));
+    assert!(folders.iter().any(|f| f.ends_with("com~apple~CloudDocs")));
+}

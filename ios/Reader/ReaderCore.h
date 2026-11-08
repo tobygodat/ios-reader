@@ -10,6 +10,7 @@ typedef struct ReaderHost ReaderHost;
 typedef enum {
     READER_REQUEST_NONE = 0,
     READER_REQUEST_PICK_BOOK = 1,
+    READER_REQUEST_PICK_FOLDER = 2,
 } ReaderRequest;
 
 typedef enum {
@@ -46,6 +47,9 @@ ReaderRequest reader_host_take_request(ReaderHost *host);
 
 // A file the document picker returned, already copied into the app's sandbox.
 void reader_host_import(ReaderHost *host, const char *path);
+
+// Searches a folder for books. The host keeps the folder readable until the next search.
+void reader_host_search_folder(ReaderHost *host, const char *path);
 
 // Whether the page the last frame drew is dark, so the status bar can match it.
 bool reader_host_page_dark(ReaderHost *host);

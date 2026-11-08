@@ -3,7 +3,7 @@
 
 use reader_core::{Block, Book, BookId, Chapter, Format, Library, PageMode, PageTheme, Position, Settings};
 
-use crate::{Host, Import, Panel, State};
+use crate::{Candidate, Finding, Host, Import, Panel, Screen, State};
 
 type Scene = (&'static str, fn(&mut State));
 
@@ -17,6 +17,18 @@ pub const SCENES: &[Scene] = &[
     ("importing", |s| {
         shelf(s, "importing");
         s.import = Import::Parsing { name: "Middlemarch.epub".into(), queued: 0 };
+    }),
+    ("finding", |s| {
+        shelf(s, "finding");
+        s.screen = Screen::Finding(Finding::Searching);
+    }),
+    ("found", |s| {
+        shelf(s, "found");
+        s.screen = Screen::Finding(Finding::Results(found()));
+    }),
+    ("found-nothing", |s| {
+        shelf(s, "found-nothing");
+        s.screen = Screen::Finding(Finding::Results(Vec::new()));
     }),
     ("reading-paper", |s| reading(s, PageTheme::Paper)),
     ("reading-sepia", |s| reading(s, PageTheme::Sepia)),
@@ -41,6 +53,28 @@ pub const SCENES: &[Scene] = &[
         hide_chrome(s);
     }),
 ];
+
+fn found() -> Vec<Candidate> {
+    let book = |title: &str, author: Option<&str>, format, folder: &str, bytes, chosen| Candidate {
+        found: reader_core::scan::Found {
+            path: format!("/Users/reader/{folder}/{title}").into(),
+            id: BookId(title.into()),
+            title: title.into(),
+            author: author.map(str::to_string),
+            format,
+            bytes,
+            folder: folder.into(),
+        },
+        chosen,
+    };
+    vec![
+        book("Middlemarch", Some("George Eliot"), Format::Epub, "Books", 1_480_000, true),
+        book("Moby-Dick; or, The Whale", Some("Herman Melville"), Format::Epub, "Downloads", 930_000, true),
+        book("The Age of Innocence and Other Stories From a Very Long Collection", Some("Edith Wharton"), Format::Epub, "Documents", 640_000, false),
+        book("attention-is-all-you-need", None, Format::Pdf, "Downloads", 2_210_000, false),
+        book("electric-bill-october", None, Format::Pdf, "Downloads", 84_000, false),
+    ]
+}
 
 const PRIDE: &str = include_str!("../assets/sample-pride.json");
 

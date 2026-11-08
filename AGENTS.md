@@ -26,6 +26,12 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 - `cargo run -p reader-core --example dump -- <file> [chapter]` prints what a book parses into.
 - `scripts/ios-build.sh` builds the iOS library, generates `ios/Reader.xcodeproj` with xcodegen, builds the simulator app and prints its path.
 
+## Finding books
+
+- `reader_core::scan` walks folders for EPUBs and PDFs not yet in the library, reading each to hash it. Nothing is imported until chosen.
+- The Mac searches `desktop_folders`. iOS can't read outside the sandbox, so the shell asks for a folder and holds its security scope until the next search, since chosen books are read from it in place.
+- iCloud files not yet downloaded are hidden placeholders on iOS and are skipped.
+
 ## TestFlight
 
 - `scripts/testflight.sh` archives in Release and uploads with the Apple ID signed in to Xcode. `scripts/testflight.sh export` stops at the signed `.ipa`. The build number is the commit count, so commit first.
