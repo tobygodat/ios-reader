@@ -56,6 +56,47 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed, String> {
     Ok(Parsed { title: package.title, author: package.author, chapters })
 }
 
+/// The cover image an EPUB names, if it names one in a format the app can draw.
+pub struct Cover {
+    pub bytes: Vec<u8>,
+    /// The file extension its bytes say it is.
+    pub extension: &'static str,
+}
+
+/// Finds the book's cover: the manifest's `cover-image`, the EPUB 2 `<meta name="cover">`, an
+/// image named like a cover, then the first image of a cover page.
+pub fn cover(bytes: &[u8]) -> Option<Cover> {
+    let mut zip = Zip::open(bytes).ok()?;
+    let container = zip.read_text("META-INF/container.xml")?;
+    let opf_path = first_attr(&container, b"rootfile", b"full-path")?;
+    let opf = zip.read_text(&opf_path)?;
+    let package = Package::parse(&opf, &dir_of(&opf_path));
+    let from_page = |zip: &mut Zip, page: &str| {
+        let src = zip.read_text(page)?;
+        let image = events(&src).into_iter().find_map(|ev| match ev {
+            Xml::Open(tag, attrs) | Xml::Empty(tag, attrs) if tag == "img" || tag == "image" => {
+                attrs.into_iter().find(|(k, _)| k == "src" || k == "href").map(|(_, v)| v)
+            }
+            _ => None,
+        })?;
+        Some(resolve(&dir_of(page), &image).0)
+    };
+    let image = package.cover.clone().or_else(|| package.cover_page.as_deref().and_then(|page| from_page(&mut zip, page)))?;
+    let bytes = zip.read_bytes(&image)?;
+    let extension = image_extension(&bytes)?;
+    Some(Cover { bytes, extension })
+}
+
+fn image_extension(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [0xff, 0xd8, 0xff, ..] => Some("jpg"),
+        [0x89, b'P', b'N', b'G', ..] => Some("png"),
+        [b'G', b'I', b'F', b'8', ..] => Some("gif"),
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("webp"),
+        _ => None,
+    }
+}
+
 struct Zip<'a> {
     archive: zip::ZipArchive<Cursor<&'a [u8]>>,
 }
@@ -67,6 +108,10 @@ impl<'a> Zip<'a> {
     }
 
     fn read_text(&mut self, path: &str) -> Option<String> {
+        self.read_bytes(path).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    fn read_bytes(&mut self, path: &str) -> Option<Vec<u8>> {
         let name = match self.archive.index_for_name(path) {
             Some(i) => i,
             None => (0..self.archive.len()).find(|&i| self.archive.name_for_index(i).is_some_and(|n| n.as_ref().is_ok_and(|n| n.eq_ignore_ascii_case(path))))?,
@@ -74,7 +119,7 @@ impl<'a> Zip<'a> {
         let mut file = self.archive.by_index(name).ok()?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).ok()?;
-        Some(String::from_utf8_lossy(&bytes).into_owned())
+        Some(bytes)
     }
 }
 
@@ -85,6 +130,10 @@ struct Package {
     spine: Vec<String>,
     nav: Option<String>,
     ncx: Option<String>,
+    /// The cover image's path in the archive.
+    cover: Option<String>,
+    /// A page holding the cover, for books that don't name the image itself.
+    cover_page: Option<String>,
 }
 
 impl Package {
@@ -93,6 +142,8 @@ impl Package {
         let mut manifest: HashMap<String, (String, String, String)> = HashMap::new();
         let mut spine_ids = Vec::new();
         let mut toc_id = None;
+        let mut cover_meta = None;
+        let mut guide_cover = None;
         let mut capture: Option<&'static str> = None;
         let mut buf = String::new();
         for ev in events(src) {
@@ -100,6 +151,18 @@ impl Package {
                 Xml::Open(tag, attrs) | Xml::Empty(tag, attrs) if tag == "item" => {
                     let get = |k: &str| attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
                     manifest.insert(get("id"), (get("href"), get("media-type"), get("properties")));
+                }
+                Xml::Open(tag, attrs) | Xml::Empty(tag, attrs) if tag == "meta" => {
+                    let get = |k: &str| attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+                    if get("name").is_some_and(|n| n.eq_ignore_ascii_case("cover")) {
+                        cover_meta = get("content").map(str::to_string);
+                    }
+                }
+                Xml::Open(tag, attrs) | Xml::Empty(tag, attrs) if tag == "reference" => {
+                    let get = |k: &str| attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+                    if get("type").is_some_and(|t| t.eq_ignore_ascii_case("cover")) {
+                        guide_cover = get("href").map(str::to_string);
+                    }
                 }
                 Xml::Open(tag, attrs) | Xml::Empty(tag, attrs) if tag == "itemref" => {
                     if let Some((_, id)) = attrs.iter().find(|(n, _)| n == "idref") {
@@ -130,6 +193,24 @@ impl Package {
             .and_then(|id| manifest.get(&id))
             .or_else(|| manifest.values().find(|(_, mt, _)| mt == "application/x-dtbncx+xml"))
             .map(|(href, _, _)| resolve(base, href).0);
+        let is_image = |mt: &str| mt.starts_with("image/");
+        let named_cover = || {
+            let mut named: Vec<_> = manifest
+                .iter()
+                .filter(|(id, (href, mt, _))| is_image(mt) && (id.to_lowercase().contains("cover") || href.to_lowercase().contains("cover")))
+                .map(|(_, (href, _, _))| href)
+                .collect();
+            named.sort();
+            named.first().map(|href| href.to_string())
+        };
+        pkg.cover = manifest
+            .values()
+            .find(|(_, _, props)| props.split_whitespace().any(|p| p == "cover-image"))
+            .map(|(href, _, _)| href.clone())
+            .or_else(|| cover_meta.as_ref().and_then(|id| manifest.get(id)).filter(|(_, mt, _)| is_image(mt)).map(|(href, _, _)| href.clone()))
+            .or_else(named_cover)
+            .map(|href| resolve(base, &href).0);
+        pkg.cover_page = guide_cover.map(|href| resolve(base, &href).0).or_else(|| pkg.spine.first().filter(|doc| doc.to_lowercase().contains("cover")).cloned());
         pkg
     }
 }
@@ -640,6 +721,53 @@ pub(crate) mod tests {
         assert_eq!(p.chapters[0].title.as_deref(), Some("First"));
         assert_eq!(p.chapters[0].blocks, [Block::Paragraph("One … ©".into())]);
         assert_eq!(p.chapters[1].title, None);
+    }
+
+    fn opf(manifest: &str, rest: &str) -> String {
+        format!(r#"<package xmlns:dc="dc"><metadata><dc:title>T</dc:title>{rest}</metadata><manifest>{manifest}</manifest><spine><itemref idref="a"/></spine></package>"#)
+    }
+
+    fn with_cover(opf: &str, extra: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let mut put = |name: &str, body: &[u8]| {
+            zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            std::io::Write::write_all(&mut zip, body).unwrap();
+        };
+        put("META-INF/container.xml", br#"<container><rootfiles><rootfile full-path="o/b.opf"/></rootfiles></container>"#);
+        put("o/b.opf", opf.as_bytes());
+        for (name, body) in extra {
+            put(name, body);
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn finds_the_cover_each_way_a_book_can_name_it() {
+        let png: &[u8] = &[0x89, b'P', b'N', b'G', 1, 2];
+        let text = r#"<item id="a" href="a.html" media-type="application/xhtml+xml"/>"#;
+        let cases = [
+            ("EPUB 3 property", opf(&format!(r#"{text}<item id="x" href="i/c.png" media-type="image/png" properties="cover-image"/><item id="y" href="i/d.png" media-type="image/png"/>"#), "")),
+            ("EPUB 2 meta", opf(&format!(r#"{text}<item id="pic" href="i/c.png" media-type="image/png"/><item id="y" href="i/d.png" media-type="image/png"/>"#), r#"<meta name="cover" content="pic"/>"#)),
+            ("named like a cover", opf(&format!(r#"{text}<item id="y" href="i/cover.png" media-type="image/png"/><item id="z" href="i/d.png" media-type="image/png"/>"#), "")),
+        ];
+        for (how, opf) in cases {
+            let epub = with_cover(&opf, &[("o/i/c.png", png), ("o/i/cover.png", png), ("o/i/d.png", b"not this")]);
+            let found = cover(&epub).unwrap_or_else(|| panic!("{how}: no cover"));
+            assert_eq!((found.bytes.as_slice(), found.extension), (png, "png"), "{how}");
+        }
+    }
+
+    #[test]
+    fn finds_the_image_on_a_cover_page_and_ignores_books_without_one() {
+        let png: &[u8] = &[0x89, b'P', b'N', b'G', 1, 2];
+        let opf_guide = format!(
+            r#"<package><manifest><item id="a" href="a.html" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine><guide><reference type="cover" href="front.html"/></guide></package>"#
+        );
+        let epub = with_cover(&opf_guide, &[("o/front.html", br#"<html><body><img src="i/f.png"/></body></html>"#), ("o/i/f.png", png)]);
+        assert_eq!(cover(&epub).expect("the cover page's image").bytes, png);
+
+        let none = with_cover(&opf(r#"<item id="a" href="a.html" media-type="application/xhtml+xml"/>"#, ""), &[]);
+        assert!(cover(&none).is_none());
     }
 
     #[test]

@@ -8,14 +8,14 @@
 //! - [`set_insets`] with the screen's safe-area insets (iOS; Rune reports zero on native).
 
 use std::cell::Cell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use reader_core::{Book, BookId, ImportError, Library, PageMode, Position, Prepared, Settings};
-use rune::{AppSpec, Key, KeyEvent, LiveText, ScrollPos, Tx, Waker};
+use rune::{AppSpec, Image, ImageCache, Key, KeyEvent, LiveText, ScrollPos, Tx, Waker};
 
 mod look;
 mod paginate;
@@ -119,13 +119,19 @@ pub struct Paged {
     want: f32,
     /// A swipe's travel, so the page follows the finger.
     pub drag: f32,
+    /// A turn asked for this frame and applied on the next one, by -1, 0 (settle back) or 1. A
+    /// touch release delivers a last `Phase::Move` in the same frame, and its instant
+    /// transaction would make any turn applied with it jump instead of slide.
+    pub(crate) release: Option<i32>,
+    /// Which way pages are leaving: new chapters come in from this side, old ones go out the other.
+    pub heading: i32,
 }
 
 impl Flow {
     fn new(mode: PageMode, fraction: f32) -> Flow {
         match mode {
             PageMode::Scroll => Flow::Scroll(Scroll { at: Rc::default(), restore: Some(fraction), chrome_at: None, progress: LiveText::new("") }),
-            PageMode::Paged => Flow::Paged(Paged { pages: Vec::new(), key: None, page: 0, want: fraction, drag: 0.0 }),
+            PageMode::Paged => Flow::Paged(Paged { pages: Vec::new(), key: None, page: 0, want: fraction, drag: 0.0, release: None, heading: 1 }),
         }
     }
 
@@ -172,6 +178,12 @@ pub struct State {
     requests: VecDeque<HostRequest>,
     inbox: Inbox,
     waker: Option<Waker>,
+    /// Decodes covers off the main thread. Set up with the waker, so tests go without pictures.
+    images: Option<ImageCache>,
+    /// Holding an image keeps it decoded for the shelf.
+    pub covers: HashMap<BookId, Image>,
+    /// How many covers the shelf has drawn. A decode finishing rebuilds it.
+    covers_ready: usize,
 }
 
 const DEFAULT_SIZE: (f32, f32) = (1100.0, 760.0);
@@ -200,6 +212,9 @@ impl State {
             requests: VecDeque::new(),
             inbox: Inbox::default(),
             waker: None,
+            images: None,
+            covers: HashMap::new(),
+            covers_ready: 0,
         }
     }
 
@@ -318,7 +333,47 @@ impl State {
         self.save_position();
     }
 
-    /// Turns `by` pages in paged mode, across chapter ends.
+    /// Asks for a turn of `by` pages on the next frame, so that it slides. See [`Paged::release`].
+    pub fn queue_turn(&mut self, by: i32, tx: &mut Tx) {
+        let Some(r) = self.reading_mut() else { return };
+        let Flow::Paged(p) = &mut r.flow else { return };
+        p.release = Some(by);
+        if by != 0 {
+            p.heading = by;
+        }
+        tx.wake_after(Duration::ZERO);
+    }
+
+    /// Starts decoding the cover of any book that has one and isn't on the shelf yet. True when
+    /// another cover has finished decoding, so the shelf should be drawn again.
+    fn load_covers(&mut self) -> bool {
+        let Some(images) = &self.images else { return false };
+        for entry in self.library.entries() {
+            if !self.covers.contains_key(&entry.id)
+                && let Some(path) = self.library.cover_path(entry)
+            {
+                self.covers.insert(entry.id.clone(), images.file(path, COVER_POINTS, COVER_SCALE));
+            }
+        }
+        let ready = self.covers.values().filter(|c| c.is_ready()).count();
+        std::mem::replace(&mut self.covers_ready, ready) != ready
+    }
+
+    fn take_release(&mut self) -> Option<i32> {
+        let Some(r) = self.reading_mut() else { return None };
+        let Flow::Paged(p) = &mut r.flow else { return None };
+        p.release.take()
+    }
+
+    /// Whether a turn `by` pages from here would stay inside the book.
+    pub fn can_turn(&self, by: i32) -> bool {
+        let Some(r) = self.reading() else { return false };
+        let Flow::Paged(p) = &r.flow else { return false };
+        let next = p.page as i64 + by as i64;
+        (next >= 0 && (next as usize) < p.pages.len()) || (next < 0 && r.chapter > 0) || (next >= p.pages.len() as i64 && r.chapter + 1 < r.book.chapters.len())
+    }
+
+    /// Turns `by` pages in paged mode, across chapter ends. Use [`State::queue_turn`] from input.
     pub fn turn(&mut self, by: i32) {
         let Some(r) = self.reading_mut() else { return };
         let (chapter, chapters) = (r.chapter, r.book.chapters.len());
@@ -329,13 +384,21 @@ impl State {
         if next < 0 {
             if chapter > 0 {
                 self.go_to_chapter(chapter - 1, true);
+                self.head(-1);
             }
         } else if next as usize >= p.pages.len() {
             if chapter + 1 < chapters {
                 self.go_to_chapter(chapter + 1, false);
+                self.head(1);
             }
         } else {
             p.page = next as usize;
+        }
+    }
+
+    fn head(&mut self, by: i32) {
+        if let Some(Reading { flow: Flow::Paged(p), .. }) = self.reading_mut() {
+            p.heading = by;
         }
     }
 
@@ -395,8 +458,13 @@ fn init() -> State {
 }
 
 fn setup(s: &mut State, waker: Waker) {
+    s.images = Some(ImageCache::new(waker.clone()));
     s.waker = Some(waker);
 }
+
+/// The longest side a cover is decoded for: a large tile's height, on a 3x screen.
+const COVER_POINTS: f32 = 300.0;
+const COVER_SCALE: f32 = 3.0;
 
 pub const SCROLL_KEY: &str = "chapter-scroll";
 const SAVE_AFTER: f64 = 0.8;
@@ -405,6 +473,11 @@ const SAVE_AFTER: f64 = 0.8;
 /// chrome fading as the reader scrolls on, and the reading position saved once it settles.
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = s.take_imports();
+    changed |= s.load_covers();
+    if let Some(by) = s.take_release() {
+        s.turn(by);
+        changed = true;
+    }
     let ty = Type::of(&s.settings);
     let Screen::Reading(r) = &mut s.screen else { return changed };
     let label = r.chapter_label();
@@ -470,9 +543,9 @@ pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
         Key::Escape if panel => s.set_panel(None),
         Key::Escape => s.close_book(),
         _ if panel => return false,
-        Key::Text(t) if t == " " && mode == PageMode::Paged => s.turn(if ev.mods.shift { -1 } else { 1 }),
-        Key::Right | Key::Down | Key::PageDown if mode == PageMode::Paged => s.turn(1),
-        Key::Left | Key::Up | Key::PageUp if mode == PageMode::Paged => s.turn(-1),
+        Key::Text(t) if t == " " && mode == PageMode::Paged => s.queue_turn(if ev.mods.shift { -1 } else { 1 }, tx),
+        Key::Right | Key::Down | Key::PageDown if mode == PageMode::Paged => s.queue_turn(1, tx),
+        Key::Left | Key::Up | Key::PageUp if mode == PageMode::Paged => s.queue_turn(-1, tx),
         Key::Text(t) if t == " " => tx.scroll_page(SCROLL_KEY, if ev.mods.shift { -1 } else { 1 }),
         _ => return false,
     }

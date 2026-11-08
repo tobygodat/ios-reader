@@ -2,6 +2,7 @@
 //! - `library.json`: one entry per book (id, title, author, format, position, added time).
 //! - `books/<id>.json`: the parsed book. Named by the hash of the file it came from, so
 //!   importing the same file again reuses it, and two imports writing it at once write the same.
+//! - `covers/<id>.<ext>`: the cover image an EPUB names.
 //! - `settings.json`: the appearance settings.
 //!
 //! Every write goes to a temporary file first and is renamed into place.
@@ -30,6 +31,9 @@ pub struct Entry {
     /// How many chapters the book has, for the progress line on its cover.
     #[serde(default)]
     pub chapters: usize,
+    /// The cover's file name in `covers/`, for a book that has one.
+    #[serde(default)]
+    pub cover: Option<String>,
 }
 
 impl Entry {
@@ -76,6 +80,11 @@ impl Library {
         &self.entries
     }
 
+    /// Where a book's cover image is on disk, if it has one.
+    pub fn cover_path(&self, entry: &Entry) -> Option<PathBuf> {
+        entry.cover.as_ref().map(|name| self.dir.join("covers").join(name))
+    }
+
     pub fn entry(&self, id: &BookId) -> Option<&Entry> {
         self.entries.iter().find(|e| &e.id == id)
     }
@@ -83,7 +92,13 @@ impl Library {
     /// Records a book [`prepare`] wrote. The same book again keeps its entry and position.
     pub fn add(&mut self, book: &Prepared) -> io::Result<&Entry> {
         let at = match self.entries.iter().position(|e| e.id == book.id) {
-            Some(at) => at,
+            Some(at) => {
+                if self.entries[at].cover.is_none() && book.cover.is_some() {
+                    self.entries[at].cover = book.cover.clone();
+                    self.save()?;
+                }
+                at
+            }
             None => {
                 let entry = Entry {
                     id: book.id.clone(),
@@ -93,6 +108,7 @@ impl Library {
                     position: Position::default(),
                     added: now(),
                     chapters: book.chapters,
+                    cover: book.cover.clone(),
                 };
                 self.entries.insert(0, entry);
                 self.save()?;
@@ -144,6 +160,7 @@ pub struct Prepared {
     pub author: Option<String>,
     pub format: Format,
     pub chapters: usize,
+    pub cover: Option<String>,
 }
 
 /// Reads, parses and stores the book at `path` under `dir`, without touching the index, so it
@@ -160,12 +177,26 @@ pub fn prepare(dir: &Path, path: &Path) -> Result<Prepared, ImportError> {
             book
         }
     };
-    Ok(Prepared::of(&book))
+    let mut prepared = Prepared::of(&book);
+    if book.format == Format::Epub {
+        prepared.cover = store_cover(dir, &id, &bytes);
+    }
+    Ok(prepared)
+}
+
+/// Saves the EPUB's cover and returns its file name. A cover that can't be saved only costs the
+/// book its picture, so the import carries on without one.
+fn store_cover(dir: &Path, id: &BookId, bytes: &[u8]) -> Option<String> {
+    let cover = crate::epub::cover(bytes)?;
+    let name = format!("{}.{}", id.0, cover.extension);
+    fs::create_dir_all(dir.join("covers")).ok()?;
+    write_atomic(&dir.join("covers").join(&name), &cover.bytes).ok()?;
+    Some(name)
 }
 
 impl Prepared {
     fn of(book: &Book) -> Prepared {
-        Prepared { id: book.id.clone(), title: book.title.clone(), author: book.author.clone(), format: book.format, chapters: book.chapters.len() }
+        Prepared { id: book.id.clone(), title: book.title.clone(), author: book.author.clone(), format: book.format, chapters: book.chapters.len(), cover: None }
     }
 }
 

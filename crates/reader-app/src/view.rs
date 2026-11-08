@@ -3,7 +3,7 @@
 
 use reader_core::{Entry, FontChoice, LineSpacing, PageMode, PageTheme, Settings};
 use rune::tok::motion;
-use rune::{Align, Color, Cursor, Cx, El, Phase, ScrollPos, ScrollSpec, Side, TextStyle, Transition, Tx, col, el, row, text};
+use rune::{Align, Color, Cursor, Cx, El, Image, Phase, ScrollPos, ScrollSpec, Side, SurfaceFit, TextStyle, Transition, Tx, col, el, row, text};
 
 use crate::look::{Kind, Palette, SANS, SERIF, Type, blend, display_title, label_family};
 use crate::paginate::Piece;
@@ -117,7 +117,7 @@ fn library(s: &State, cx: &mut Cx<State>, pal: &Palette) -> El {
         let gap = if avail < 500.0 { 20.0 } else { 32.0 };
         let cols = ((avail + gap) / (150.0 + gap)).floor().max(2.0);
         let tile_w = ((avail - gap * (cols - 1.0)) / cols).min(190.0).floor();
-        let grid = row().key("shelf").w_full().flex_wrap().gaps(36.0, gap).children(entries.iter().map(|e| cover(e, tile_w, pal)));
+        let grid = row().key("shelf").w_full().flex_wrap().gaps(36.0, gap).children(entries.iter().map(|e| cover(e, s.covers.get(&e.id), tile_w, pal)));
         let content = col().w_full().px(m).pl(m + left).pr(m + right).pt(top_pad).pb(48.0 + bottom).gap(28.0).child(header).children(status).child(grid);
         col().key("library").w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(content)
     };
@@ -164,24 +164,21 @@ fn tint(pal: &Palette, entry: &Entry) -> Color {
     blend(pal.tile, rune::oklch(l, if pal.dark { 0.02 } else { 0.022 }, hue as f32), 0.7)
 }
 
-fn cover(e: &Entry, w: f32, pal: &Palette) -> El {
+fn cover(e: &Entry, image: Option<&Image>, w: f32, pal: &Palette) -> El {
     let id = e.id.clone();
     let title_size = (w * 0.115).clamp(15.0, 20.0).round();
     let progress = e.progress();
-    let mut tile = col()
-        .w(w)
-        .h((w * 1.5).round())
-        .radius(5.0)
-        .fill(tint(pal, e))
-        .border(1.0, pal.ink.alpha(0.05))
-        .shadow(1.0, 3.0, pal.shadow.alpha(pal.shadow.a * 0.5))
-        .padding(14.0)
-        .justify_between()
-        .child(text(e.title.as_str()).font(TextStyle::new(title_size, 500.0).family(SERIF).lh((title_size * 1.25).round())).color(pal.ink).wrap().max_lines(6));
+    let picture = image.filter(|i| i.is_ready() && i.error().is_none());
+    let base = col().w(w).h((w * 1.5).round()).radius(5.0).border(1.0, pal.ink.alpha(0.05)).shadow(1.0, 3.0, pal.shadow.alpha(pal.shadow.a * 0.5));
+    let mut tile = match picture {
+        Some(image) => base.key("cover-image").clip_rounded(5.0).fill(pal.tile).pixels_fit(image.pixels(), SurfaceFit::Fill).justify_end().padding(8.0),
+        None => base.key("cover-title").fill(tint(pal, e)).padding(14.0).justify_between().child(
+            text(e.title.as_str()).font(TextStyle::new(title_size, 500.0).family(SERIF).lh((title_size * 1.25).round())).color(pal.ink).wrap().max_lines(6),
+        ),
+    };
     if progress > 0.0 {
-        tile = tile.child(
-            el().key("progress").w_full().h(2.0).radius(1.0).fill(pal.hairline).child(el().h(2.0).w_frac(progress.max(0.02)).radius(1.0).fill(pal.muted)),
-        );
+        let (track, done) = if picture.is_some() { (Color::BLACK.alpha(0.35), Color::WHITE.alpha(0.9)) } else { (pal.hairline, pal.muted) };
+        tile = tile.child(el().key("progress").w_full().h(2.0).radius(1.0).fill(track).child(el().h(2.0).w_frac(progress.max(0.02)).radius(1.0).fill(done)));
     }
     let author = e.author.as_deref().unwrap_or(match e.format {
         reader_core::Format::Epub => "EPUB",
@@ -387,11 +384,18 @@ fn scrolled(s: &State, r: &Reading, sc: &crate::Scroll, ty: &Type, pal: &Palette
         )
 }
 
+/// How far a swipe must travel to turn the page, in points.
+const SWIPE_TURNS: f32 = 40.0;
+/// How much of a swipe the page follows when there's nothing further to turn to.
+const PAST_THE_END: f32 = 0.25;
+
 fn paged(s: &State, r: &Reading, p: &crate::Paged, ty: &Type, pal: &Palette) -> El {
     let [top, _, bottom, _] = s.insets;
     let win_w = s.window[0];
     let col_w = column_width(ty, win_w);
     let left = ((win_w - col_w) / 2.0).floor();
+    let along = p.heading as f32 * win_w;
+    let chapter_slide = Transition::asymmetric(Transition::offset(along, 0.0), Transition::offset(-along, 0.0));
     let pages = (p.page.saturating_sub(1)..(p.page + 2).min(p.pages.len())).map(|k| {
         let x = left + (k as f32 - p.page as f32) * win_w + p.drag;
         col()
@@ -400,6 +404,7 @@ fn paged(s: &State, r: &Reading, p: &crate::Paged, ty: &Type, pal: &Palette) -> 
             .absolute(x.round(), 0.0)
             .gap(ty.gap)
             .motion(motion::GLIDE)
+            .transition(chapter_slide)
             .children(p.pages[k].iter().map(|Piece { kind, text }| block(ty, pal, *kind, text)))
     });
     let page_box = el()
@@ -416,8 +421,11 @@ fn paged(s: &State, r: &Reading, p: &crate::Paged, ty: &Type, pal: &Palette) -> 
         .on_drag(|s: &mut State, d: &mut rune::Drag, tx: &mut Tx| match d.phase {
             Phase::Down => {}
             Phase::Move => {
+                let by = if d.dx < 0.0 { 1 } else { -1 };
+                let travel = if s.can_turn(by) { d.dx } else { d.dx * PAST_THE_END };
                 if let Some(Flow::Paged(p)) = s.reading_flow_mut() {
-                    p.drag = d.dx;
+                    p.drag = travel;
+                    p.heading = by;
                     tx.instant();
                 }
             }
@@ -426,21 +434,19 @@ fn paged(s: &State, r: &Reading, p: &crate::Paged, ty: &Type, pal: &Palette) -> 
                 if tap {
                     let third = d.start_x / d.w.max(1.0);
                     if third < 1.0 / 3.0 {
-                        s.turn(-1);
+                        s.queue_turn(-1, tx);
                     } else if third > 2.0 / 3.0 {
-                        s.turn(1);
+                        s.queue_turn(1, tx);
                     } else {
-                        if let Some(Flow::Paged(p)) = s.reading_flow_mut() {
-                            p.drag = 0.0;
-                        }
+                        s.settle_page(tx);
                         s.toggle_chrome();
                     }
-                } else if d.dx < -40.0 {
-                    s.turn(1);
-                } else if d.dx > 40.0 {
-                    s.turn(-1);
-                } else if let Some(Flow::Paged(p)) = s.reading_flow_mut() {
-                    p.drag = 0.0;
+                } else if d.dx < -SWIPE_TURNS && s.can_turn(1) {
+                    s.queue_turn(1, tx);
+                } else if d.dx > SWIPE_TURNS && s.can_turn(-1) {
+                    s.queue_turn(-1, tx);
+                } else {
+                    s.settle_page(tx);
                 }
             }
         })
@@ -449,6 +455,12 @@ fn paged(s: &State, r: &Reading, p: &crate::Paged, ty: &Type, pal: &Palette) -> 
 }
 
 impl State {
+    fn settle_page(&mut self, tx: &mut Tx) {
+        let Some(Flow::Paged(p)) = self.reading_flow_mut() else { return };
+        p.release = Some(0);
+        tx.wake_after(std::time::Duration::ZERO);
+    }
+
     fn reading_flow_mut(&mut self) -> Option<&mut Flow> {
         match &mut self.screen {
             Screen::Reading(r) => Some(&mut r.flow),

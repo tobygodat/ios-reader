@@ -71,3 +71,19 @@ fn rfc_2616_pdf() {
     let abstract_ = all.iter().find(|t| t.starts_with("The Hypertext Transfer Protocol (HTTP) is an application-level")).expect("the abstract");
     assert!(abstract_.ends_with("the typing and negotiation of data representation, allowing systems to be built independently of the data being transferred."), "{abstract_}");
 }
+
+#[test]
+fn pride_and_prejudice_keeps_its_own_cover() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = fixture("pride-and-prejudice.epub");
+    let prepared = reader_core::prepare(dir.path(), &path).unwrap();
+    let name = prepared.cover.as_deref().expect("this edition names a cover");
+    let stored = std::fs::read(dir.path().join("covers").join(name)).unwrap();
+
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+    let entry = (0..archive.len()).map(|i| archive.name_for_index(i).unwrap().unwrap().to_string()).find(|n| n.ends_with("_cover.jpg")).unwrap();
+    let mut original = Vec::new();
+    std::io::Read::read_to_end(&mut archive.by_name(&entry).unwrap(), &mut original).unwrap();
+    assert_eq!(stored, original, "the stored cover is the one the book names");
+    assert!(name.ends_with(".jpg"));
+}

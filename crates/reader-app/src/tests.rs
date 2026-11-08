@@ -189,3 +189,50 @@ fn every_scene_builds() {
         assert!(rt.find("root").is_some(), "{name}");
     }
 }
+
+/// A book open in paged mode on its first page, ready to be swiped.
+fn paged_book(data: &Path, dir: &Path) -> Runtime<State> {
+    let book = write_epub(dir);
+    let mut rt = runtime(data);
+    click(&mut rt, "import-empty");
+    rt.resolve_file_dialog(Some(book)).expect("the dialog is open");
+    settle(&mut rt, 2);
+    wait_for_import(&mut rt);
+    let id = rt.state.library.entries()[0].id.clone();
+    click(&mut rt, &format!("book-{}", id.0));
+    rt.update(|s, _| s.change(|c| c.mode = PageMode::Paged));
+    settle(&mut rt, 30);
+    rt
+}
+
+/// How far a page's center sits from where it comes to rest, each frame after a release.
+fn travel(rt: &mut Runtime<State>, key: &str, frames: usize) -> Vec<f32> {
+    let rest = |rt: &mut Runtime<State>| rt.find(key).map(|(x, _)| x);
+    let mut xs = Vec::new();
+    for _ in 0..frames {
+        rt.frame(1.0 / 60.0);
+        xs.extend(rest(rt));
+    }
+    let last = *xs.last().expect("the page is on screen");
+    xs.iter().map(|x| x - last).collect()
+}
+
+#[test]
+fn a_swiped_page_slides_home_instead_of_jumping() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut rt = paged_book(&tmp.path().join("data"), tmp.path());
+    let (x, y) = rt.find("page-0-0").expect("the first page shows");
+
+    rt.pointer_move(x, y);
+    rt.pointer_down(x, y);
+    rt.pointer_move(x - 60.0, y);
+    settle(&mut rt, 2);
+    rt.pointer_move(x - 120.0, y);
+    rt.pointer_up(x - 130.0, y);
+
+    let from_rest = travel(&mut rt, "page-0-1", 60);
+    assert!(matches!(&rt.state.reading().unwrap().flow, Flow::Paged(p) if p.page == 1), "the swipe turned the page");
+    let moving = from_rest.iter().filter(|d| d.abs() > 4.0).count();
+    assert!(moving >= 5, "the page should travel over several frames, got {moving}: {from_rest:?}");
+    assert!(from_rest.windows(2).all(|w| w[1].abs() <= w[0].abs() + 0.5), "and head home without jumping back: {from_rest:?}");
+}
