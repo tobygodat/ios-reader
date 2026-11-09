@@ -5,9 +5,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class ReaderViewController: UIViewController, RuneViewDelegate, UIDocumentPickerDelegate {
     private let rune = RuneView()
-    /// The folder being searched. iOS allows reading it, and the books the person then chooses
-    /// from it, only while access is held.
-    private var searched: URL?
+    private let folders = BookFolders()
 
     override func loadView() {
         rune.delegate = self
@@ -30,12 +28,30 @@ final class ReaderViewController: UIViewController, RuneViewDelegate, UIDocument
         present(picker, animated: true)
     }
 
-    func runeViewWantsFolder(_ view: RuneView) {
+    func runeViewWantsBooksFound(_ view: RuneView) {
+        guard folders.isEmpty else {
+            searchFolders()
+            return
+        }
         guard presentedViewController == nil else { return }
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder])
-        picker.delegate = self
-        picker.allowsMultipleSelection = false
-        present(picker, animated: true)
+        let alert = UIAlertController(
+            title: "Find books",
+            message: "iPhone only lets Reader look in folders you allow. Choose one, such as Downloads or iCloud Drive, and Reader will look there each time.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Choose Folder", style: .default) { [weak self] _ in
+            self?.pickFolder()
+        })
+        present(alert, animated: true)
+    }
+
+    func runeViewWantsNewFolder(_ view: RuneView) {
+        pickFolder()
+    }
+
+    func runeViewForgetsFolders(_ view: RuneView) {
+        folders.forget()
     }
 
     func runeView(_ view: RuneView, wantsCredentialsToCreate create: Bool) {
@@ -72,12 +88,24 @@ final class ReaderViewController: UIViewController, RuneViewDelegate, UIDocument
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         if let folder = urls.first, folder.hasDirectoryPath {
-            searched?.stopAccessingSecurityScopedResource()
-            searched = folder.startAccessingSecurityScopedResource() ? folder : nil
-            rune.searchFolder(at: folder)
+            folders.add(folder)
+            searchFolders()
         } else {
             urls.forEach(rune.importBook)
         }
+    }
+
+    private func pickFolder() {
+        guard presentedViewController == nil else { return }
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder])
+        picker.delegate = self
+        picker.allowsMultipleSelection = false
+        present(picker, animated: true)
+    }
+
+    /// The app's own Documents folder shows in the Files app, so people can put books there.
+    private func searchFolders() {
+        rune.searchFolders(at: [URL.documentsDirectory] + folders.open())
     }
 
     /// Files opened in place live outside the sandbox: copy them in before the library sees them.

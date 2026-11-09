@@ -7,7 +7,9 @@ let log = Logger(subsystem: "com.tobygodat.reader", category: "host")
 @MainActor
 protocol RuneViewDelegate: AnyObject {
     func runeViewWantsBook(_ view: RuneView)
-    func runeViewWantsFolder(_ view: RuneView)
+    func runeViewWantsBooksFound(_ view: RuneView)
+    func runeViewWantsNewFolder(_ view: RuneView)
+    func runeViewForgetsFolders(_ view: RuneView)
     func runeView(_ view: RuneView, wantsCredentialsToCreate create: Bool)
     func runeView(_ view: RuneView, pageDark: Bool)
 }
@@ -67,9 +69,11 @@ final class RuneView: UIView {
         email.withCString { e in password.withCString { p in reader_host_submit_credentials(host, e, p, create) } }
     }
 
-    func searchFolder(at url: URL) {
+    func searchFolders(at urls: [URL]) {
         guard let host else { return }
-        url.path.withCString { reader_host_search_folder(host, $0) }
+        let paths = urls.map { UnsafePointer(strdup($0.path)) }
+        defer { paths.forEach { free(UnsafeMutablePointer(mutating: $0)) } }
+        reader_host_search_folders(host, paths, paths.count)
     }
 
     func importBook(at url: URL) {
@@ -191,8 +195,12 @@ final class RuneView: UIView {
                 return
             case READER_REQUEST_PICK_BOOK:
                 delegate?.runeViewWantsBook(self)
-            case READER_REQUEST_PICK_FOLDER:
-                delegate?.runeViewWantsFolder(self)
+            case READER_REQUEST_FIND_BOOKS:
+                delegate?.runeViewWantsBooksFound(self)
+            case READER_REQUEST_ADD_FOLDER:
+                delegate?.runeViewWantsNewFolder(self)
+            case READER_REQUEST_FORGET_FOLDERS:
+                delegate?.runeViewForgetsFolders(self)
             case READER_REQUEST_SIGN_IN:
                 delegate?.runeView(self, wantsCredentialsToCreate: false)
             case READER_REQUEST_CREATE_ACCOUNT:

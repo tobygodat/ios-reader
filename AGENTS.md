@@ -29,7 +29,7 @@ Homebrew's rustup keeps its proxies off `PATH`. Run `export PATH=/opt/homebrew/o
 ## Finding books
 
 - `reader_core::scan` walks folders for EPUBs and PDFs not yet in the library, reading each to hash it. Nothing is imported until chosen.
-- The Mac searches `desktop_folders`. iOS can't read outside the sandbox, so the shell asks for a folder and holds its security scope until the next search, since chosen books are read from it in place.
+- The Mac searches `desktop_folders`. iOS can't read outside the sandbox, so the shell asks for a folder once and `ios/Reader/BookFolders.swift` remembers it as a bookmark in `book-folders.plist`. Later searches skip the picker. It holds each folder's security scope until the next search, since chosen books are read from it in place. The app's own Documents folder is always searched.
 - iCloud files not yet downloaded are hidden placeholders on iOS and are skipped.
 
 ## Sync

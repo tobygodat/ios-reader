@@ -21,9 +21,11 @@ use rune::embed::LayerHost;
 
 const REQUEST_NONE: u32 = 0;
 const REQUEST_PICK_BOOK: u32 = 1;
-const REQUEST_PICK_FOLDER: u32 = 2;
+const REQUEST_FIND_BOOKS: u32 = 2;
 const REQUEST_SIGN_IN: u32 = 3;
 const REQUEST_CREATE_ACCOUNT: u32 = 4;
+const REQUEST_ADD_FOLDER: u32 = 5;
+const REQUEST_FORGET_FOLDERS: u32 = 6;
 
 pub struct ReaderHost {
     view: LayerHost<State>,
@@ -221,7 +223,9 @@ pub extern "C" fn reader_host_touch(host: *mut ReaderHost, id: u64, phase: u32, 
 pub extern "C" fn reader_host_take_request(host: *mut ReaderHost) -> u32 {
     with_host(host, REQUEST_NONE, |h| match reader_app::take_request(&mut h.view.runtime_mut().state) {
         Some(HostRequest::PickBook) => REQUEST_PICK_BOOK,
-        Some(HostRequest::PickFolder) => REQUEST_PICK_FOLDER,
+        Some(HostRequest::FindBooks) => REQUEST_FIND_BOOKS,
+        Some(HostRequest::AddFolder) => REQUEST_ADD_FOLDER,
+        Some(HostRequest::ForgetFolders) => REQUEST_FORGET_FOLDERS,
         Some(HostRequest::AskCredentials { create: false }) => REQUEST_SIGN_IN,
         Some(HostRequest::AskCredentials { create: true }) => REQUEST_CREATE_ACCOUNT,
         None => REQUEST_NONE,
@@ -237,11 +241,14 @@ pub unsafe extern "C" fn reader_host_import(host: *mut ReaderHost, path: *const 
 }
 
 /// # Safety
-/// `path` is a NUL-terminated path the host keeps readable until the next search.
+/// `paths` points to `count` NUL-terminated paths the host keeps readable until the next search.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn reader_host_search_folder(host: *mut ReaderHost, path: *const c_char) {
-    let Some(path) = path_arg(path) else { return };
-    with_host(host, (), |h| h.view.runtime_mut().update(|s, _| reader_app::search_folder(s, &path)));
+pub unsafe extern "C" fn reader_host_search_folders(host: *mut ReaderHost, paths: *const *const c_char, count: usize) {
+    if paths.is_null() {
+        return;
+    }
+    let paths: Vec<PathBuf> = unsafe { std::slice::from_raw_parts(paths, count) }.iter().filter_map(|p| path_arg(*p)).collect();
+    with_host(host, (), |h| h.view.runtime_mut().update(|s, _| reader_app::search_folders(s, paths)));
 }
 
 /// # Safety

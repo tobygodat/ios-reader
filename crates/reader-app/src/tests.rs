@@ -30,7 +30,11 @@ fn write_epub(dir: &Path) -> PathBuf {
 }
 
 fn runtime(data: &Path) -> Runtime<State> {
-    let state = State::open(data, Host::Desktop);
+    runtime_on(data, Host::Desktop)
+}
+
+fn runtime_on(data: &Path, host: Host) -> Runtime<State> {
+    let state = State::open(data, host);
     let mut rt = Runtime::with_text(state, view::view, (900.0, 700.0), Env::new(false, 2.0), rune::text::TextSystem::new(FONTS, FAMILIES));
     rt.poll = Some(poll);
     rt.on_key = Some(on_key);
@@ -282,6 +286,44 @@ fn a_search_left_early_doesnt_pull_the_reader_back() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(matches!(rt.state.screen, Screen::Library));
+}
+
+#[test]
+fn an_iphone_search_leaves_the_folders_to_the_host_and_lists_books_from_all_of_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (first, second) = (tmp.path().join("first"), tmp.path().join("second"));
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    write_epub(&first);
+    std::fs::write(second.join("paper.pdf"), b"%PDF-1.7 a paper").unwrap();
+    let mut rt = runtime_on(&tmp.path().join("data"), Host::Ios);
+
+    rt.update(|s, _| s.find_books());
+    assert_eq!(take_request(&mut rt.state), Some(HostRequest::FindBooks));
+    assert!(matches!(rt.state.screen, Screen::Library), "the host may need to ask first");
+
+    rt.update(|s, _| search_folders(s, vec![first.clone(), second.clone()]));
+    wait_until(&mut rt, "the search", |s| matches!(s.screen, Screen::Finding(Finding::Results(_))));
+    let Screen::Finding(Finding::Results(found)) = &rt.state.screen else { unreachable!() };
+    let titles: Vec<_> = found.iter().map(|c| c.found.title.as_str()).collect();
+    assert_eq!(titles, ["An Evening", "paper"]);
+
+    click(&mut rt, "find-add-folder");
+    assert_eq!(take_request(&mut rt.state), Some(HostRequest::AddFolder));
+    assert!(matches!(rt.state.screen, Screen::Finding(Finding::Results(_))), "the list stays up while the person picks");
+
+    click(&mut rt, "find-forget-folders");
+    assert_eq!(take_request(&mut rt.state), Some(HostRequest::ForgetFolders));
+    assert!(matches!(rt.state.screen, Screen::Library));
+}
+
+#[test]
+fn a_mac_search_has_no_folder_links() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut rt = runtime(&tmp.path().join("data"));
+    rt.update(|s, _| s.search(vec![tmp.path().join("empty")]));
+    wait_until(&mut rt, "the search", |s| matches!(s.screen, Screen::Finding(Finding::Results(_))));
+    assert!(rt.find("find-add-folder").is_none());
 }
 
 #[test]

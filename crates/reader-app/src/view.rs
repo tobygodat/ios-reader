@@ -258,9 +258,9 @@ fn finding_view(s: &State, finding: &Finding, pal: &Palette) -> El {
         Finding::Results(candidates) if candidates.is_empty() => {
             let words = match s.host {
                 Host::Desktop => "No new books in Documents, Downloads, Desktop, Books or iCloud Drive.",
-                Host::Ios => "No new books in that folder. Files still in iCloud need downloading first.",
+                Host::Ios => "No new books in the folders you allowed. Files still in iCloud need downloading first.",
             };
-            return page.child(header).child(note(words.into()));
+            return page.child(header).child(note(words.into())).children(folder_links(s, pal));
         }
         Finding::Results(candidates) => candidates,
     };
@@ -290,7 +290,20 @@ fn finding_view(s: &State, finding: &Finding, pal: &Palette) -> El {
         .child(header)
         .child(note(format!("{found} Choose the ones to add. PDFs start unchecked, since they’re often not books.")))
         .child(col().key("find-results").w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).children(rows))
+        .children(folder_links(s, pal))
         .child(add)
+}
+
+/// The iPhone searches only the folders the person allowed, so they can change which ones.
+fn folder_links(s: &State, pal: &Palette) -> Option<El> {
+    (s.host == Host::Ios).then(|| {
+        row()
+            .w_full()
+            .justify_center()
+            .gap(8.0)
+            .child(button("find-add-folder", "Add a folder", pal).on_press(|s: &mut State| s.add_folder()))
+            .child(button("find-forget-folders", "Forget folders", pal).on_press(|s: &mut State| s.forget_folders()))
+    })
 }
 
 fn candidate_row(at: usize, c: &Candidate, pal: &Palette) -> El {

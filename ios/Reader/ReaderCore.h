@@ -2,6 +2,7 @@
 // Every call runs on the main thread. Points are UIKit points; `scale` is the screen scale.
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct ReaderHost ReaderHost;
@@ -10,9 +11,11 @@ typedef struct ReaderHost ReaderHost;
 typedef enum {
     READER_REQUEST_NONE = 0,
     READER_REQUEST_PICK_BOOK = 1,
-    READER_REQUEST_PICK_FOLDER = 2,
+    READER_REQUEST_FIND_BOOKS = 2,
     READER_REQUEST_SIGN_IN = 3,
     READER_REQUEST_CREATE_ACCOUNT = 4,
+    READER_REQUEST_ADD_FOLDER = 5,
+    READER_REQUEST_FORGET_FOLDERS = 6,
 } ReaderRequest;
 
 typedef enum {
@@ -53,8 +56,8 @@ void reader_host_import(ReaderHost *host, const char *path);
 // Signs in with, or creates an account from, what the host asked for.
 void reader_host_submit_credentials(ReaderHost *host, const char *email, const char *password, bool create);
 
-// Searches a folder for books. The host keeps the folder readable until the next search.
-void reader_host_search_folder(ReaderHost *host, const char *path);
+// Searches folders for books. The host keeps them readable until the next search.
+void reader_host_search_folders(ReaderHost *host, const char *const *paths, size_t count);
 
 // Whether the page the last frame drew is dark, so the status bar can match it.
 bool reader_host_page_dark(ReaderHost *host);

@@ -5,7 +5,7 @@
 //! - [`spec`] builds the `AppSpec` both hosts run.
 //! - [`take_request`] after each frame: something only the host can do (the iOS document picker).
 //! - [`import`] with a file the host picked.
-//! - [`search_folder`] with a folder the host picked.
+//! - [`search_folders`] with the folders the host may read.
 //! - [`submit_credentials`] with an email and password the host asked for.
 //! - [`set_insets`] with the screen's safe-area insets (iOS; Rune reports zero on native).
 
@@ -40,8 +40,13 @@ pub enum Host {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostRequest {
     PickBook,
-    /// A folder to search for books. iOS only lets an app read what the person picks.
-    PickFolder,
+    /// Search for books. iOS only lets an app read what the person allows, so the host searches
+    /// the folders it remembers, asking for one if it has none.
+    FindBooks,
+    /// One more folder to remember and search.
+    AddFolder,
+    /// Stop remembering the folders.
+    ForgetFolders,
     /// An email and password. The Rune fields have no keyboard on iOS, so the host asks natively.
     AskCredentials { create: bool },
 }
@@ -317,10 +322,10 @@ impl State {
         });
     }
 
-    /// Starts a search: the usual folders on the desktop, a folder the person picks on iOS.
+    /// Starts a search: the usual folders on the desktop, the ones the person allowed on iOS.
     pub fn find_books(&mut self) {
         match self.host {
-            Host::Ios => self.requests.push_back(HostRequest::PickFolder),
+            Host::Ios => self.requests.push_back(HostRequest::FindBooks),
             Host::Desktop => {
                 let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
                 self.search(desktop_folders(&home));
@@ -363,6 +368,17 @@ impl State {
     /// Leaves the search without adding anything.
     pub fn close_finding(&mut self) {
         self.screen = Screen::Library;
+    }
+
+    /// Asks the host for another folder. The results stay up if the person changes their mind.
+    pub fn add_folder(&mut self) {
+        self.requests.push_back(HostRequest::AddFolder);
+    }
+
+    /// Has the host forget the folders, so the next search asks again.
+    pub fn forget_folders(&mut self) {
+        self.requests.push_back(HostRequest::ForgetFolders);
+        self.close_finding();
     }
 
     /// Imports the chosen results and goes back to the library to show them arriving.
@@ -558,9 +574,9 @@ pub fn submit_credentials(state: &mut State, email: String, password: String, cr
     state.submit_credentials(email, password, create);
 }
 
-/// Searches a folder the host picked. The host keeps it readable until the next search.
-pub fn search_folder(state: &mut State, path: &Path) {
-    state.search(vec![path.to_path_buf()]);
+/// Searches folders on the host's behalf. The host keeps them readable until the next search.
+pub fn search_folders(state: &mut State, paths: Vec<PathBuf>) {
+    state.search(paths);
 }
 
 /// Where a person's books tend to be on a Mac. The private ones ask for permission when read.
